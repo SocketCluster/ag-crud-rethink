@@ -1,6 +1,6 @@
 {
-  "name": "sc-crud-rethink",
-  "version": "7.1.0",
+  "name": "ag-crud-rethink",
+  "version": "0.9.0",
   "description": "A realtime REST layer plugin for SC using RethinkDB as the database",
   "main": "index.js",
   "scripts": {
