@@ -1,15 +1,15 @@
 const constructTransformedRethinkQuery = require('./query-transformer').constructTransformedRethinkQuery;
 const parseChannelResourceQuery = require('./channel-resource-parser').parseChannelResourceQuery;
 
-let Filter = function (scServer, options) {
-  // Setup SocketCluster middleware for access control and filtering
+let Filter = function (agServer, options) {
+  // Setup Asyngular middleware for access control and filtering
 
   this.options = options || {};
   this.schema = this.options.schema || {};
   this.thinky = this.options.thinky;
   this.cache = this.options.cache;
-  this.scServer = scServer;
-  this.logger = this.options.logger;
+  this.agServer = agServer;
+  this.logger = this.options.logger; // TODO 2: Do not log directly, emit error instead.
 
   this._getModelFilter = (modelType, filterPhase) => {
     let modelSchema = this.schema[modelType];
@@ -23,119 +23,147 @@ let Filter = function (scServer, options) {
     return modelFilters[filterPhase] || null;
   };
 
-  scServer.addMiddleware(scServer.MIDDLEWARE_EMIT, (req, next) => {
-    if (req.event === 'create' || req.event === 'read' || req.event === 'update' || req.event === 'delete') {
-      // If socket has a valid auth token, then allow emitting get or set events
-      let authToken = req.socket.authToken;
+  agServer.setMiddleware(agServer.MIDDLEWARE_INBOUND, async (middlewareStream) => {
+    for await (let action of middlewareStream) {
+      if (action.type === action.INVOKE) {
+        if (action.procedure === 'create' || action.procedure === 'read' || action.procedure === 'update' || action.procedure === 'delete') {
+          // If socket has a valid auth token, then allow emitting get or set events
+          let authToken = action.socket.authToken;
 
-      let preFilter = this._getModelFilter(req.data.type, 'pre');
-      if (preFilter) {
-        let crudRequest = {
-          r: this.thinky.r,
-          socket: req.socket,
-          action: req.event,
-          authToken: authToken,
-          query: req.data
-        };
-        preFilter(crudRequest, (err) => {
-          if (err) {
-            if (typeof err === 'boolean') {
-              err = new Error('You are not permitted to perform a CRUD operation on the ' + req.data.type + ' resource with ID ' + req.data.id);
-              err.name = 'CRUDBlockedError';
-              err.type = 'pre';
+          let preFilter = this._getModelFilter(action.data.type, 'pre');
+          if (preFilter) {
+            let crudRequest = {
+              r: this.thinky.r,
+              socket: action.socket,
+              action: action.procedure,
+              authToken,
+              query: action.data
+            };
+            try {
+              await preFilter(crudRequest);
+            } catch (error) {
+              if (typeof error === 'boolean') {
+                error = new Error('You are not permitted to perform a CRUD operation on the ' + action.data.type + ' resource with ID ' + action.data.id);
+                error.name = 'CRUDBlockedError';
+                error.type = 'pre';
+              }
+              action.block(error);
+              continue;
             }
-            next(err);
-          } else {
-            next();
+            action.allow();
+            continue;
           }
-        });
-      } else {
+          if (this.options.blockPreByDefault) {
+            let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + action.data.type + ' resource with ID ' + action.data.id + ' - No filters found');
+            crudBlockedError.name = 'CRUDBlockedError';
+            crudBlockedError.type = 'pre';
+            action.block(crudBlockedError);
+            continue;
+          }
+          action.allow();
+          continue;
+        }
+        action.allow();
+        continue;
+      }
+
+      if (action.type === action.PUBLISH_IN) {
+        let channelResourceQuery = parseChannelResourceQuery(action.channel);
+        if (channelResourceQuery) {
+          // Always block CRUD publish from outside clients.
+          let crudPublishNotAllowedError = new Error('Cannot publish to a CRUD resource channel');
+          crudPublishNotAllowedError.name = 'CRUDPublishNotAllowedError';
+          action.block(crudPublishNotAllowedError);
+          continue;
+        }
+        action.allow();
+        continue;
+      }
+
+      if (action.type === action.SUBSCRIBE) {
+        let authToken = action.socket.authToken;
+        let channelResourceQuery = parseChannelResourceQuery(action.channel);
+        if (!channelResourceQuery) {
+          action.allow();
+          continue;
+        }
+        // Sometimes the real viewParams may be different from what can be parsed from
+        // the channel name; this is because some view params don't affect the real-time
+        // delivery of messages but they may still be useful in constructing the view.
+        if (channelResourceQuery.view !== undefined && action.data && typeof action.data.viewParams === 'object') {
+          channelResourceQuery.viewParams = action.data.viewParams;
+        }
+
+        let continueWithPostFilter = async () => {
+          let subscribePostRequest = {
+            socket: action.socket,
+            action: 'subscribe',
+            query: channelResourceQuery,
+            fetchResource: true
+          };
+          let result;
+          try {
+            result = await this.applyPostFilter(subscribePostRequest);
+          } catch (error) {
+            action.block(error);
+            return;
+          }
+          action.allow(result);
+        };
+
+        let preFilter = this._getModelFilter(channelResourceQuery.type, 'pre');
+        if (preFilter) {
+          let subscribePreRequest = {
+            r: this.thinky.r,
+            socket: action.socket,
+            action: 'subscribe',
+            authToken,
+            query: channelResourceQuery
+          };
+          try {
+            await preFilter(subscribePreRequest);
+          } catch (error) {
+            if (typeof error === 'boolean') {
+              error = new Error('Cannot subscribe to ' + action.channel + ' channel');
+              error.name = 'CRUDBlockedError';
+              error.type = 'pre';
+            }
+            action.block(error);
+            continue;
+          }
+          await continueWithPostFilter();
+          continue;
+        }
         if (this.options.blockPreByDefault) {
-          let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + req.data.type + ' resource with ID ' + req.data.id + ' - No filters found');
+          let crudBlockedError = new Error('Cannot subscribe to ' + action.channel + ' channel - No filters found');
           crudBlockedError.name = 'CRUDBlockedError';
           crudBlockedError.type = 'pre';
-          next(crudBlockedError);
-        } else {
-          next();
+          action.block(crudBlockedError);
+          continue;
         }
+        await continueWithPostFilter();
+        continue;
       }
-    } else {
-      // This module is only responsible for CRUD-related filtering.
-      next();
-    }
-  });
 
-  scServer.addMiddleware(scServer.MIDDLEWARE_PUBLISH_IN, (req, next) => {
-    let channelResourceQuery = parseChannelResourceQuery(req.channel);
-    if (channelResourceQuery) {
-      // Always block CRUD publish from outside clients.
-      let crudPublishNotAllowedError = new Error('Cannot publish to a CRUD resource channel');
-      crudPublishNotAllowedError.name = 'CRUDPublishNotAllowedError';
-      next(crudPublishNotAllowedError);
-    } else {
-      next();
-    }
-  });
-
-  scServer.addMiddleware(scServer.MIDDLEWARE_SUBSCRIBE, (req, next) => {
-    let authToken = req.socket.authToken;
-    let channelResourceQuery = parseChannelResourceQuery(req.channel);
-    if (!channelResourceQuery) {
-      next();
-      return;
-    }
-    // Sometimes the real viewParams may be different from what can be parsed from
-    // the channel name; this is because some view params don't affect the real-time
-    // delivery of messages but they may still be useful in constructing the view.
-    if (channelResourceQuery.view !== undefined && req.data && typeof req.data.viewParams === 'object') {
-      channelResourceQuery.viewParams = req.data.viewParams;
-    }
-
-    let continueWithPostFilter = () => {
-      let subscribePostRequest = {
-        socket: req.socket,
-        action: 'subscribe',
-        query: channelResourceQuery,
-        fetchResource: true
-      };
-      this.applyPostFilter(subscribePostRequest, next);
-    };
-
-    let preFilter = this._getModelFilter(channelResourceQuery.type, 'pre');
-    if (preFilter) {
-      let subscribePreRequest = {
-        r: this.thinky.r,
-        socket: req.socket,
-        action: 'subscribe',
-        authToken: authToken,
-        query: channelResourceQuery
-      };
-      preFilter(subscribePreRequest, (err) => {
-        if (err) {
-          if (typeof err === 'boolean') {
-            err = new Error('Cannot subscribe to ' + req.channel + ' channel');
-            err.name = 'CRUDBlockedError';
-            err.type = 'pre';
-          }
-          next(err);
-        } else {
-          continueWithPostFilter();
-        }
-      });
-    } else {
-      if (this.options.blockPreByDefault) {
-        let crudBlockedError = new Error('Cannot subscribe to ' + req.channel + ' channel - No filters found');
-        crudBlockedError.name = 'CRUDBlockedError';
-        crudBlockedError.type = 'pre';
-        next(crudBlockedError);
-      } else {
-        continueWithPostFilter();
-      }
+      action.allow();
+      continue;
     }
   });
 };
 
-Filter.prototype.applyPostFilter = function (req, next) {
+Filter.prototype.applyPostFilter = async function (req) {
+  return new Promise((resolve, reject) => {
+    this._applyPostFilter(req, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
+};
+
+Filter.prototype._applyPostFilter = function (req, next) {
   let query = req.query;
   let postFilter = this._getModelFilter(query.type, 'post');
 
@@ -145,25 +173,28 @@ Filter.prototype.applyPostFilter = function (req, next) {
       socket: req.socket,
       action: req.action,
       authToken: req.socket && req.socket.authToken,
-      query: query
+      query
     };
     if (!req.fetchResource) {
       request.resource = req.resource;
     }
 
     let continueWithPostFilter = () => {
-      postFilter(request, (err) => {
-        if (err) {
-          if (typeof err === 'boolean') {
-            err = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id);
-            err.name = 'CRUDBlockedError';
-            err.type = 'post';
+      (async () => {
+        try {
+          await postFilter(request);
+        } catch (error) {
+          if (typeof error === 'boolean') {
+            error = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id);
+            error.name = 'CRUDBlockedError';
+            error.type = 'post';
           }
-          next(err);
-        } else {
-          next();
+          next(error);
+
+          return;
         }
-      });
+        next();
+      })();
     };
 
     if (req.fetchResource) {

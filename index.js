@@ -2,13 +2,13 @@ const thinky = require('thinky');
 const async = require('async');
 const Filter = require('./filter');
 const Cache = require('./cache');
-const EventEmitter = require('events').EventEmitter;
+const AsyncStreamEmitter = require('async-stream-emitter');
 const jsonStableStringify = require('json-stable-stringify');
 const constructTransformedRethinkQuery = require('./query-transformer').constructTransformedRethinkQuery;
 const parseChannelResourceQuery = require('./channel-resource-parser').parseChannelResourceQuery;
 
-let SCCRUDRethink = function (options) {
-  EventEmitter.call(this);
+let AGCRUDRethink = function (options) {
+  AsyncStreamEmitter.call(this);
 
   this.options = Object.assign({}, options);
 
@@ -38,15 +38,15 @@ let SCCRUDRethink = function (options) {
   this.options.models = this.models;
 
   let cacheDisabled;
-  if (this.options.worker) {
-    this.scServer = this.options.worker.scServer;
+  if (this.options.agServer) {
+    this.agServer = this.options.agServer;
     cacheDisabled = this.options.cacheDisabled || false;
   } else {
-    this.scServer = null;
+    this.agServer = null;
     if (this.options.hasOwnProperty('cacheDisabled')) {
       cacheDisabled = this.options.cacheDisabled || false;
     } else {
-      // If worker is not defined and cacheDisabled isn't defined,
+      // If agServer is not defined and cacheDisabled isn't defined,
       // then by default we will disable the cache.
       cacheDisabled = true;
     }
@@ -58,62 +58,75 @@ let SCCRUDRethink = function (options) {
   });
   this.options.cache = this.cache;
 
-  this.cache.on('expire', this._cleanupResourceChannel.bind(this));
-  this.cache.on('clear', this._cleanupResourceChannel.bind(this));
+  (async () => {
+    for await (let {query} of this.cache.listener('expire')) {
+      this._cleanupResourceChannel(query);
+    }
+  })();
+  (async () => {
+    for await (let {query} of this.cache.listener('clear')) {
+      this._cleanupResourceChannel(query);
+    }
+  })();
 
   this._resourceReadBuffer = {};
 
-  if (this.scServer) {
-    this.filter = new Filter(this.scServer, this.options);
+  if (this.agServer) {
+    this.filter = new Filter(this.agServer, this.options);
 
-    this.publish = this.scServer.exchange.publish.bind(this.scServer.exchange);
+    this.publish = this.agServer.exchange.transmitPublish.bind(this.agServer.exchange);
 
-    this.scServer.on('_handshake', (socket) => {
-      this._attachSocket(socket);
-    });
+    (async () => {
+      let consumer = this.agServer.listener('handshake').createConsumer();
+      while (true) {
+        let packet = await consumer.next();
+        if (packet.value && packet.value.socket) {
+          this._attachSocket(packet.value.socket);
+        }
+      }
+    })();
   } else {
     // If no server is available, publish will be a no-op.
     this.publish = () => {};
   }
 };
 
-SCCRUDRethink.prototype = Object.create(EventEmitter.prototype);
+AGCRUDRethink.prototype = Object.create(AsyncStreamEmitter.prototype);
 
-SCCRUDRethink.prototype._getResourceChannelName = function (resource) {
+AGCRUDRethink.prototype._getResourceChannelName = function (resource) {
   return this.channelPrefix + resource.type + '/' + resource.id;
 };
 
-SCCRUDRethink.prototype._getResourcePropertyChannelName = function (resourceProperty) {
+AGCRUDRethink.prototype._getResourcePropertyChannelName = function (resourceProperty) {
   return this.channelPrefix + resourceProperty.type + '/' + resourceProperty.id + '/' + resourceProperty.field;
 };
 
-SCCRUDRethink.prototype._cleanupResourceChannel = function (resource) {
+AGCRUDRethink.prototype._cleanupResourceChannel = function (resource) {
   let resourceChannelName = this._getResourceChannelName(resource);
-  let resourceChannel = this.scServer.exchange.channel(resourceChannelName);
+  let resourceChannel = this.agServer.exchange.channel(resourceChannelName);
   resourceChannel.unsubscribe();
-  resourceChannel.destroy();
 };
 
-SCCRUDRethink.prototype._handleResourceChange = function (resource) {
+AGCRUDRethink.prototype._handleResourceChange = function (resource) {
   this.cache.clear(resource);
 };
 
-SCCRUDRethink.prototype._getViews = function (type) {
+AGCRUDRethink.prototype._getViews = function (type) {
   let typeSchema = this.schema[type] || {};
   return typeSchema.views || {};
 };
 
-SCCRUDRethink.prototype._isValidView = function (type, viewName) {
+AGCRUDRethink.prototype._isValidView = function (type, viewName) {
   let modelViews = this._getViews(type);
   return modelViews.hasOwnProperty(viewName);
 };
 
-SCCRUDRethink.prototype._getView = function (type, viewName) {
+AGCRUDRethink.prototype._getView = function (type, viewName) {
   let modelViews = this._getViews(type);
   return modelViews[viewName];
 };
 
-SCCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, type) {
+AGCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, type) {
   let primaryParams;
   let viewSchema = this._getView(type, viewName);
 
@@ -131,13 +144,13 @@ SCCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, ty
   return this.channelPrefix + viewName + '(' + viewPrimaryParamsString + '):' + type;
 };
 
-SCCRUDRethink.prototype._areObjectsEqual = function (objectA, objectB) {
+AGCRUDRethink.prototype._areObjectsEqual = function (objectA, objectB) {
   let objectStringA = jsonStableStringify(objectA || {});
   let objectStringB = jsonStableStringify(objectB || {});
   return objectStringA === objectStringB;
 };
 
-SCCRUDRethink.prototype.getModifiedResourceFields = function (updateDetails) {
+AGCRUDRethink.prototype.getModifiedResourceFields = function (updateDetails) {
   let oldResource = updateDetails.oldResource || {};
   let newResource = updateDetails.newResource || {};
   let modifiedFieldsMap = {};
@@ -156,10 +169,10 @@ SCCRUDRethink.prototype.getModifiedResourceFields = function (updateDetails) {
   return modifiedFieldsMap;
 };
 
-SCCRUDRethink.prototype.getQueryAffectedViews = function (query, resource) {
+AGCRUDRethink.prototype.getQueryAffectedViews = function (query, resource) {
   let updateDetails = {
     type: query.type,
-    resource: resource
+    resource
   };
   if (query.field) {
     updateDetails.fields = [query.field];
@@ -167,7 +180,7 @@ SCCRUDRethink.prototype.getQueryAffectedViews = function (query, resource) {
   return this.getAffectedViews(updateDetails);
 };
 
-SCCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
+AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
   let affectedViews = [];
   let resource = updateDetails.resource || {};
 
@@ -215,16 +228,16 @@ SCCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
         affectedViews.push({
           view: viewName,
           type: updateDetails.type,
-          params: params,
-          affectingData: affectingData
+          params,
+          affectingData
         });
       }
     } else {
       affectedViews.push({
         view: viewName,
         type: updateDetails.type,
-        params: params,
-        affectingData: affectingData
+        params,
+        affectingData
       });
     }
   });
@@ -232,8 +245,8 @@ SCCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
 };
 
 /*
-  If you update the database outside of sc-crud-rethink, you can use this method
-  to clear sc-crud-rethink cache for a resource and notify all client subscribers
+  If you update the database outside of ag-crud-rethink, you can use this method
+  to clear ag-crud-rethink cache for a resource and notify all client subscribers
   about the change.
 
   The updateDetails argument must be an object with the following properties:
@@ -244,7 +257,7 @@ SCCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
       and each value represents the new updated value for the field (providing
       updated values is a performance optimization).
 */
-SCCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
+AGCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
   if (updateDetails == null) {
     let invalidArgumentsError = new Error('The updateDetails object was not specified');
     invalidArgumentsError.name = 'InvalidArgumentsError';
@@ -298,8 +311,8 @@ SCCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
 };
 
 /*
-  If you update the database outside of sc-crud-rethink, you can use this method
-  to clear sc-crud-rethink cache for a view and notify all client subscribers
+  If you update the database outside of ag-crud-rethink, you can use this method
+  to clear ag-crud-rethink cache for a view and notify all client subscribers
   about the change.
 
   The updateDetails argument must be an object with the following properties:
@@ -307,7 +320,7 @@ SCCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
     view: The name of the view.
     params: The predicate object/value which defines the affected view.
 */
-SCCRUDRethink.prototype.notifyViewUpdate = function (updateDetails) {
+AGCRUDRethink.prototype.notifyViewUpdate = function (updateDetails) {
   if (updateDetails == null) {
     let invalidArgumentsError = new Error('The updateDetails object was not specified');
     invalidArgumentsError.name = 'InvalidArgumentsError';
@@ -337,8 +350,8 @@ SCCRUDRethink.prototype.notifyViewUpdate = function (updateDetails) {
 };
 
 /*
-  If you update the database outside of sc-crud-rethink, you can use this method
-  to clear sc-crud-rethink cache and notify all client subscribers (both the resource
+  If you update the database outside of ag-crud-rethink, you can use this method
+  to clear ag-crud-rethink cache and notify all client subscribers (both the resource
   and any affected views) about the change.
 
   The updateDetails argument must be an object with the following properties:
@@ -350,7 +363,7 @@ SCCRUDRethink.prototype.notifyViewUpdate = function (updateDetails) {
       If the resource no longer exists after the operation (deleted), then
       this should be set to null.
 */
-SCCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
+AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
   if (updateDetails == null) {
     let invalidArgumentsError = new Error('The updateDetails object was not specified');
     invalidArgumentsError.name = 'InvalidArgumentsError';
@@ -420,7 +433,19 @@ SCCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
 // Add a new document to a collection. This will send a change notification to each
 // affected view (taking into account the affected page number within each view).
 // This allows views to update themselves on the front-end in real-time.
-SCCRUDRethink.prototype.create = function (query, callback, socket) {
+AGCRUDRethink.prototype.create = async function (query, socket) {
+  return new Promise((resolve, reject) => {
+    this._create(query, (err, result) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(result);
+    }, socket);
+  });
+};
+
+AGCRUDRethink.prototype._create = function (query, callback, socket) {
   let validationError = this._validateQuery(query);
   if (validationError) {
     callback && callback(validationError);
@@ -447,7 +472,7 @@ SCCRUDRethink.prototype.create = function (query, callback, socket) {
         });
       });
 
-      callback && callback(err, result.id);
+      callback && callback(null, result.id);
     }
   };
 
@@ -455,6 +480,7 @@ SCCRUDRethink.prototype.create = function (query, callback, socket) {
     let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
     error.name = 'CRUDInvalidModelType';
     savedHandler(error);
+    return Promise.reject();
   } if (typeof query.value === 'object') {
     let instance = new ModelClass(query.value);
     instance.save(savedHandler);
@@ -465,14 +491,14 @@ SCCRUDRethink.prototype.create = function (query, callback, socket) {
   }
 };
 
-SCCRUDRethink.prototype._appendToResourceReadBuffer = function (resourceChannelName, loadedHandler) {
+AGCRUDRethink.prototype._appendToResourceReadBuffer = function (resourceChannelName, loadedHandler) {
   if (!this._resourceReadBuffer[resourceChannelName]) {
     this._resourceReadBuffer[resourceChannelName] = [];
   }
   this._resourceReadBuffer[resourceChannelName].push(loadedHandler);
 };
 
-SCCRUDRethink.prototype._processResourceReadBuffer = function (error, resourceChannelName, query, dataProvider) {
+AGCRUDRethink.prototype._processResourceReadBuffer = function (error, resourceChannelName, query, dataProvider) {
   let callbackList = this._resourceReadBuffer[resourceChannelName] || [];
   if (error) {
     callbackList.forEach((callback) => {
@@ -488,9 +514,21 @@ SCCRUDRethink.prototype._processResourceReadBuffer = function (error, resourceCh
 
 // Read either a collection of IDs, a single document or a single field
 // within a document. To achieve efficient field-level granularity, a cache is used.
-// A cache entry will automatically get cleared when sc-crud-rethink detects
+// A cache entry will automatically get cleared when ag-crud-rethink detects
 // a real-time change to a field which is cached.
-SCCRUDRethink.prototype.read = function (query, callback, socket) {
+AGCRUDRethink.prototype.read = async function (query, socket) {
+  return new Promise((resolve, reject) => {
+    this._read(query, (err, result) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(result);
+    }, socket);
+  });
+};
+
+AGCRUDRethink.prototype._read = function (query, callback, socket) {
   let validationError = this._validateQuery(query);
   if (validationError) {
     callback && callback(validationError);
@@ -499,71 +537,70 @@ SCCRUDRethink.prototype.read = function (query, callback, socket) {
 
   let pageSize = query.pageSize || this.options.defaultPageSize;
 
-  let loadedHandler = (err, data, count) => {
+  let loadedHandler = async (err, data, count) => {
     if (err) {
       callback && callback(err);
-    } else {
-      // If socket does not exist, then the CRUD operation comes from the server-side
-      // and we don't need to pass it through a filter.
-      let applyPostFilter;
-      if (socket && this.filter) {
-        applyPostFilter = this.filter.applyPostFilter.bind(this.filter);
-      } else {
-        applyPostFilter = (req, next) => {
-          next();
-        };
-      }
-      let filterRequest = {
-        r: this.thinky.r,
-        socket: socket,
-        action: 'read',
-        authToken: socket && socket.authToken,
-        query: query,
-        resource: data
-      };
-      applyPostFilter(filterRequest, (err) => {
-        if (err) {
-          callback && callback(err);
-        } else {
-          let result;
-          if (query.id) {
-            if (query.field) {
-              if (data == null) {
-                data = {};
-              }
-              result = data[query.field];
-            } else {
-              result = data;
-            }
-          } else {
-            let documentList = [];
-            let resultCount = Math.min(data.length, pageSize);
-
-            for (let i = 0; i < resultCount; i++) {
-              documentList.push(data[i].id || null);
-            }
-            result = {
-              data: documentList
-            };
-
-            if (query.getCount) {
-              result.count = count;
-            }
-
-            if (data.length < pageSize + 1) {
-              result.isLastPage = true;
-            }
-          }
-          // Return null instead of undefined - That way the frontend will know
-          // that the value was read but didn't exist (or was null).
-          if (result === undefined) {
-            result = null;
-          }
-
-          callback && callback(null, result);
-        }
-      });
+      return;
     }
+    // If socket does not exist, then the CRUD operation comes from the server-side
+    // and we don't need to pass it through a filter.
+    let applyPostFilter;
+    if (socket && this.filter) {
+      applyPostFilter = this.filter.applyPostFilter.bind(this.filter);
+    } else {
+      applyPostFilter = () => Promise.resolve();
+    }
+    let filterRequest = {
+      r: this.thinky.r,
+      socket,
+      action: 'read',
+      authToken: socket && socket.authToken,
+      query,
+      resource: data
+    };
+
+    try {
+      await applyPostFilter(filterRequest);
+    } catch (error) {
+      callback && callback(error);
+      return;
+    }
+    let result;
+    if (query.id) {
+      if (query.field) {
+        if (data == null) {
+          data = {};
+        }
+        result = data[query.field];
+      } else {
+        result = data;
+      }
+    } else {
+      let documentList = [];
+      let resultCount = Math.min(data.length, pageSize);
+
+      for (let i = 0; i < resultCount; i++) {
+        documentList.push(data[i].id || null);
+      }
+      result = {
+        data: documentList
+      };
+
+      if (query.getCount) {
+        result.count = count;
+      }
+
+      if (data.length < pageSize + 1) {
+        result.isLastPage = true;
+      }
+    }
+    // Return null instead of undefined - That way the frontend will know
+    // that the value was read but didn't exist (or was null).
+    if (result === undefined) {
+      result = null;
+    }
+
+    callback && callback(null, result);
   };
 
   let ModelClass = this.models[query.type];
@@ -587,8 +624,8 @@ SCCRUDRethink.prototype.read = function (query, callback, socket) {
       };
       let resourceChannelName = this._getResourceChannelName(query);
 
-      let isSubscribedToResourceChannel = this.scServer.exchange.isSubscribed(resourceChannelName);
-      let isSubscribedToResourceChannelOrPending = this.scServer.exchange.isSubscribed(resourceChannelName, true);
+      let isSubscribedToResourceChannel = this.agServer.exchange.isSubscribed(resourceChannelName);
+      let isSubscribedToResourceChannelOrPending = this.agServer.exchange.isSubscribed(resourceChannelName, true);
       let isSubcriptionPending = !isSubscribedToResourceChannel && isSubscribedToResourceChannelOrPending;
 
       this._appendToResourceReadBuffer(resourceChannelName, loadedHandler);
@@ -601,20 +638,36 @@ SCCRUDRethink.prototype.read = function (query, callback, socket) {
         // If there is no pending subscription, then we should create one and process the
         // buffer when we're subscribed.
         let handleResourceSubscribe = () => {
-          resourceChannel.removeListener('subscribeFail', handleResourceSubscribeFailure);
+          resourceChannel.killListener('subscribeFail');
           this._processResourceReadBuffer(null, resourceChannelName, query, dataProvider);
         };
         let handleResourceSubscribeFailure = (err) => {
-          resourceChannel.removeListener('subscribe', handleResourceSubscribe);
+          resourceChannel.killListener('subscribe');
           let error = new Error('Failed to subscribe to resource channel for the ' + query.type + ' model');
           error.name = 'FailedToSubscribeToResourceChannel';
           this._processResourceReadBuffer(error, resourceChannelName, query, dataProvider);
         };
 
-        let resourceChannel = this.scServer.exchange.subscribe(resourceChannelName);
-        resourceChannel.once('subscribe', handleResourceSubscribe);
-        resourceChannel.once('subscribeFail', handleResourceSubscribeFailure);
-        resourceChannel.watch(this._handleResourceChange.bind(this, query));
+        let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);
+
+        (async () => {
+          for await (let data of resourceChannel) {
+            this._handleResourceChange(query);
+          }
+        })();
+
+        if (resourceChannel.state === 'subscribed') {
+          this._processResourceReadBuffer(null, resourceChannelName, query, dataProvider);
+        } else {
+          (async () => {
+            await resourceChannel.listener('subscribe').once();
+            handleResourceSubscribe();
+          })();
+          (async () => {
+            let {error} = await resourceChannel.listener('subscribeFail').once();
+            handleResourceSubscribeFailure(error);
+          })();
+        }
       }
     } else {
       let rethinkQuery = constructTransformedRethinkQuery(this.options, ModelClass, query.type, query.view, query.viewParams);
@@ -659,7 +712,19 @@ SCCRUDRethink.prototype.read = function (query, callback, socket) {
 // clients to let them know if a view that they are currently looking at
 // has been affected by the update operation - This allows them to update
 // themselves in real-time.
-SCCRUDRethink.prototype.update = function (query, callback, socket) {
+AGCRUDRethink.prototype.update = async function (query, socket) {
+  return new Promise((resolve, reject) => {
+    this._update(query, (err, result) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(result);
+    }, socket);
+  });
+};
+
+AGCRUDRethink.prototype._update = function (query, callback, socket) {
   let validationError = this._validateQuery(query);
   if (validationError) {
     callback && callback(validationError);
@@ -668,7 +733,8 @@ SCCRUDRethink.prototype.update = function (query, callback, socket) {
 
   let savedHandler = (err, oldAffectedViewData, result) => {
     if (err) {
-      this.emit('warning', err);
+      this.emit('warning', {warning: err});
+      callback && callback(err);
     } else {
       let resourceChannelName = this._getResourceChannelName(query);
       this.publish(resourceChannelName);
@@ -691,7 +757,7 @@ SCCRUDRethink.prototype.update = function (query, callback, socket) {
           }
           this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
             type: 'update',
-            value: value
+            value
           });
         });
       }
@@ -730,8 +796,8 @@ SCCRUDRethink.prototype.update = function (query, callback, socket) {
           });
         }
       });
+      callback && callback();
     }
-    callback && callback(err);
   };
 
   let ModelClass = this.models[query.type];
@@ -752,17 +818,15 @@ SCCRUDRethink.prototype.update = function (query, callback, socket) {
     if (socket && this.filter) {
       applyPostFilter = this.filter.applyPostFilter.bind(this.filter);
     } else {
-      applyPostFilter = (req, next) => {
-        next();
-      };
+      applyPostFilter = () => Promise.resolve();
     }
 
     let filterRequest = {
       r: this.thinky.r,
-      socket: socket,
+      socket,
       action: 'update',
       authToken: socket && socket.authToken,
-      query: query
+      query
     };
 
     let modelInstance;
@@ -782,35 +846,35 @@ SCCRUDRethink.prototype.update = function (query, callback, socket) {
       } else {
         tasks.push(loadModelInstanceAndGetViewData);
 
-        tasks.push((cb) => {
+        tasks.push(async (cb) => {
           filterRequest.resource = modelInstance;
-          applyPostFilter(filterRequest, (err) => {
-            if (err) {
-              cb(err);
-            } else {
-              modelInstance[query.field] = query.value;
-              modelInstance.save(cb);
-            }
-          });
+          try {
+            await applyPostFilter(filterRequest);
+          } catch (error) {
+            cb(error);
+            return;
+          }
+          modelInstance[query.field] = query.value;
+          modelInstance.save(cb);
         });
       }
     } else {
       if (typeof query.value === 'object') {
         tasks.push(loadModelInstanceAndGetViewData);
 
-        tasks.push((cb) => {
+        tasks.push(async (cb) => {
           filterRequest.resource = modelInstance;
-          applyPostFilter(filterRequest, (err) => {
-            if (err) {
-              cb(err);
-            } else {
-              let queryValue = query.value || {};
-              Object.keys(queryValue).forEach((field) => {
-                modelInstance[field] = queryValue[field];
-              });
-              modelInstance.save(cb);
-            }
+          try {
+            await applyPostFilter(filterRequest);
+          } catch (error) {
+            cb(error);
+            return;
+          }
+          let queryValue = query.value || {};
+          Object.keys(queryValue).forEach((field) => {
+            modelInstance[field] = queryValue[field];
           });
+          modelInstance.save(cb);
         });
       } else {
         let error = new Error('Cannot replace document with a primitive - Must be an object');
@@ -833,7 +897,19 @@ SCCRUDRethink.prototype.update = function (query, callback, socket) {
 // Delete a single document or field from a document.
 // This will notify affected views so that they may update themselves
 // in real-time.
-SCCRUDRethink.prototype.delete = function (query, callback, socket) {
+AGCRUDRethink.prototype.delete = async function (query, socket) {
+  return new Promise((resolve, reject) => {
+    this._delete(query, (err, result) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(result);
+    }, socket);
+  });
+};
+
+AGCRUDRethink.prototype._delete = function (query, callback, socket) {
   let validationError = this._validateQuery(query);
   if (validationError) {
     callback && callback(validationError);
@@ -842,7 +918,8 @@ SCCRUDRethink.prototype.delete = function (query, callback, socket) {
 
   let deletedHandler = (err, oldAffectedViewData, result) => {
     if (err) {
-      this.emit('warning', err);
+      this.emit('warning', {warning: err});
+      callback && callback(err);
     } else {
       if (query.field) {
         this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
@@ -869,8 +946,8 @@ SCCRUDRethink.prototype.delete = function (query, callback, socket) {
           });
         });
       }
+      callback && callback();
     }
-    callback && callback(err);
   };
 
   let ModelClass = this.models[query.type];
@@ -901,41 +978,39 @@ SCCRUDRethink.prototype.delete = function (query, callback, socket) {
       if (socket && this.filter) {
         applyPostFilter = this.filter.applyPostFilter.bind(this.filter);
       } else {
-        applyPostFilter = (req, next) => {
-          next();
-        };
+        applyPostFilter = () => Promise.resolve();
       }
 
       let filterRequest = {
         r: this.thinky.r,
-        socket: socket,
+        socket,
         action: 'delete',
         authToken: socket && socket.authToken,
-        query: query
+        query
       };
 
       if (query.field == null) {
-        tasks.push((cb) => {
+        tasks.push(async (cb) => {
           filterRequest.resource = modelInstance;
-          applyPostFilter(filterRequest, (err) => {
-            if (err) {
-              cb(err);
-            } else {
-              modelInstance.delete(cb);
-            }
-          });
+          try {
+            await applyPostFilter(filterRequest);
+          } catch (error) {
+            cb(error);
+            return;
+          }
+          modelInstance.delete(cb);
         });
       } else {
-        tasks.push((cb) => {
+        tasks.push(async (cb) => {
           filterRequest.resource = modelInstance;
-          applyPostFilter(filterRequest, (err) => {
-            if (err) {
-              cb(err);
-            } else {
-              delete modelInstance[query.field];
-              modelInstance.save(cb);
-            }
-          });
+          try {
+            await applyPostFilter(filterRequest);
+          } catch (error) {
+            cb(error);
+            return;
+          }
+          delete modelInstance[query.field];
+          modelInstance.save(cb);
         });
       }
       if (tasks.length) {
@@ -951,22 +1026,56 @@ SCCRUDRethink.prototype.delete = function (query, callback, socket) {
   }
 };
 
-SCCRUDRethink.prototype._attachSocket = function (socket) {
-  socket.on('create', (query, callback) => {
-    this.create(query, callback, socket);
-  });
-  socket.on('read', (query, callback) => {
-    this.read(query, callback, socket);
-  });
-  socket.on('update', (query, callback) => {
-    this.update(query, callback, socket);
-  });
-  socket.on('delete', (query, callback) => {
-    this.delete(query, callback, socket);
-  });
+AGCRUDRethink.prototype._attachSocket = function (socket) {
+  (async () => {
+    for await (let request of socket.procedure('create')) {
+      let result;
+      try {
+        result = await this.create(request.data, socket);
+      } catch (error) {
+        request.error(error);
+        continue;
+      }
+      request.end(result);
+    }
+  })();
+  (async () => {
+    for await (let request of socket.procedure('read')) {
+      let result;
+      try {
+        result = await this.read(request.data, socket);
+      } catch (error) {
+        request.error(error);
+        continue;
+      }
+      request.end(result);
+    }
+  })();
+  (async () => {
+    for await (let request of socket.procedure('update')) {
+      try {
+        await this.update(request.data, socket);
+      } catch (error) {
+        request.error(error);
+        continue;
+      }
+      request.end();
+    }
+  })();
+  (async () => {
+    for await (let request of socket.procedure('delete')) {
+      try {
+        await this.delete(request.data, socket);
+      } catch (error) {
+        request.error(error);
+        continue;
+      }
+      request.end();
+    }
+  })();
 };
 
-SCCRUDRethink.prototype._validateRequiredViewParams = function (viewParams) {
+AGCRUDRethink.prototype._validateRequiredViewParams = function (viewParams) {
   if (viewParams === undefined || viewParams === null) {
     return new Error(`Invalid view query - The view ${query.view} under the type ${query.type} expects viewParams but it was null or undefined`);
   }
@@ -977,7 +1086,7 @@ SCCRUDRethink.prototype._validateRequiredViewParams = function (viewParams) {
   return null;
 };
 
-SCCRUDRethink.prototype._validateViewQuery = function (query) {
+AGCRUDRethink.prototype._validateViewQuery = function (query) {
   let viewSchema = this._getView(query.type, query.view);
   if (!viewSchema) {
     return new Error(`Invalid view query - The view ${query.view} was not defined in the schema under the type ${query.type}`);
@@ -1015,7 +1124,7 @@ SCCRUDRethink.prototype._validateViewQuery = function (query) {
   return null;
 };
 
-SCCRUDRethink.prototype._validateQuery = function (query) {
+AGCRUDRethink.prototype._validateQuery = function (query) {
   if (query === undefined || query === null) {
     return new Error(`Invalid query - The query was null or undefined`);
   }
@@ -1057,13 +1166,13 @@ SCCRUDRethink.prototype._validateQuery = function (query) {
 };
 
 module.exports.thinky = thinky;
-module.exports.SCCRUDRethink = SCCRUDRethink;
+module.exports.AGCRUDRethink = AGCRUDRethink;
 
-module.exports.attach = function (worker, options) {
+module.exports.attach = function (agServer, options) {
   if (options) {
-    options.worker = worker;
+    options.agServer = agServer;
   } else {
-    options = {worker: worker};
+    options = {agServer};
   }
-  return new SCCRUDRethink(options);
+  return new AGCRUDRethink(options);
 };

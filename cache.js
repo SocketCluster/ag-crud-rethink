@@ -1,6 +1,7 @@
-const EventEmitter = require('events').EventEmitter;
+const AsyncStreamEmitter = require('async-stream-emitter');
 
 let Cache = function (options) {
+  AsyncStreamEmitter.call(this);
   this._cache = {};
   this._watchers = {};
   this.options = options || {};
@@ -8,7 +9,7 @@ let Cache = function (options) {
   this.cacheDisabled = !!this.options.cacheDisabled;
 };
 
-Cache.prototype = Object.create(EventEmitter.prototype);
+Cache.prototype = Object.create(AsyncStreamEmitter.prototype);
 
 Cache.prototype._getResourcePath = function (query) {
   if (!query.type || !query.id) {
@@ -38,9 +39,12 @@ Cache.prototype.set = function (query, data, resourcePath) {
   }
 
   entry.timeout = setTimeout(() => {
-    let freshEntry = this._cache[resourcePath] || {};
+    let oldCacheEntry = this._cache[resourcePath] || {};
     delete this._cache[resourcePath];
-    this.emit('expire', this._simplifyQuery(query), freshEntry);
+    this.emit('expire', {
+      query: this._simplifyQuery(query),
+      oldCacheEntry
+    });
   }, this.cacheDuration);
 
   this._cache[resourcePath] = entry;
@@ -49,13 +53,16 @@ Cache.prototype.set = function (query, data, resourcePath) {
 Cache.prototype.clear = function (query) {
   let resourcePath = this._getResourcePath(query);
 
-  let entry = this._cache[resourcePath];
-  if (entry) {
-    if (entry.timeout) {
-      clearTimeout(entry.timeout);
+  let oldCacheEntry = this._cache[resourcePath];
+  if (oldCacheEntry) {
+    if (oldCacheEntry.timeout) {
+      clearTimeout(oldCacheEntry.timeout);
     }
     delete this._cache[resourcePath];
-    this.emit('clear', this._simplifyQuery(query), entry);
+    this.emit('clear', {
+      query: this._simplifyQuery(query),
+      oldCacheEntry
+    });
   }
 };
 
@@ -107,19 +114,25 @@ Cache.prototype.pass = function (query, provider, callback) {
   this._pushWatcher(resourcePath, callback);
 
   if (cacheEntry) {
-    this.emit('hit', query, cacheEntry);
+    this.emit('hit', {
+       query,
+       cacheEntry
+    });
     if (!cacheEntry.pending) {
       this._processCacheWatchers(resourcePath, null, cacheEntry.resource);
     }
   } else {
-    this.emit('miss', query);
+    this.emit('miss', {query});
     cacheEntry = {
       pending: true,
       patch: {}
     };
 
     this.set(query, cacheEntry, resourcePath);
-    this.emit('set', this._simplifyQuery(query), cacheEntry);
+    this.emit('set', {
+      query: this._simplifyQuery(query),
+      cacheEntry
+    });
 
     provider((err, data) => {
       if (!err) {
@@ -137,7 +150,10 @@ Cache.prototype.pass = function (query, provider, callback) {
         };
 
         this.set(query, newCacheEntry, resourcePath);
-        this.emit('set', this._simplifyQuery(query), newCacheEntry);
+        this.emit('set', {
+          query: this._simplifyQuery(query),
+          cacheEntry: newCacheEntry
+        });
       }
       this._processCacheWatchers(resourcePath, err, data);
     });
@@ -160,7 +176,7 @@ Cache.prototype.update = function (resourceChannelString, data) {
   let query = {
     type: resourceParts[0],
     id: resourceParts[1],
-    field: field
+    field
   };
 
   if (query.type && query.id && field) {
@@ -176,7 +192,9 @@ Cache.prototype.update = function (resourceChannelString, data) {
           oldValue = cacheEntry.resource[field];
           cacheEntry.resource[field] = data.value;
         }
-        this.emit('update', query, cacheEntry, {
+        this.emit('update', {
+          query,
+          cacheEntry,
           oldValue: oldValue,
           newValue: data.value
         });

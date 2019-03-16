@@ -1,21 +1,20 @@
-# sc-crud-rethink
-Realtime CRUD data management layer/plugin for SocketCluster using RethinkDB as the database.
+# ag-crud-rethink
+Realtime CRUD data management layer/plugin for Asyngular using RethinkDB as the database.
 
-See https://github.com/socketcluster/sc-sample-inventory for a full working sample.
+See https://github.com/socketcluster/ag-sample-inventory for a full working sample.
 
 ## Setup
 
-See https://github.com/socketcluster/sc-sample-inventory for sample app which demonstrates this component in action.
+See https://github.com/socketcluster/ag-sample-inventory for sample app which demonstrates this component in action.
 
-This module is a plugin for SocketCluster, so you need to have SC installed: http://socketcluster.io/#!/docs/getting-started
-Once SC is installed and you have created a new SC project, you should navigate to your project's main directory and run:
+This module is a plugin for Asyngular, so you need to have Asyngular installed: https://asyngular.io/
+Once Asyngular is installed and you have created a new project, you should navigate to your project's main directory and run:
 
 ```bash
-npm install sc-crud-rethink --save
+npm install ag-crud-rethink --save
 ```
 
-Now you will need to attach the plugin to your worker - So open ```worker.js``` and attach it to your worker instance like this:
-https://github.com/SocketCluster/sc-sample-inventory/blob/e0628b312642faa60c604a27f5eb2bfbd4231e24/worker.js#L121
+Now you will need to attach the plugin to your Asyngular server - So open ```server.js``` and pass the `agServer` instance to the `attach` function exposed by this module.
 
 As shown in the sample above, you will need to provide a schema for your data.
 In the example above, the Category, Product, and User keys represent tables/models within RethinkDB - Inside each of these, you

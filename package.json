@@ -1,23 +1,24 @@
 {
   "name": "ag-crud-rethink",
-  "version": "0.9.0",
-  "description": "A realtime REST layer plugin for SC using RethinkDB as the database",
+  "version": "1.0.0",
+  "description": "A realtime REST layer plugin for Asyngular using RethinkDB as the database",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/socketcluster/sc-crud-rethink.git"
+    "url": "git://github.com/SocketCluster/ag-crud-rethink.git"
   },
   "dependencies": {
     "async": "1.4.2",
+    "async-stream-emitter": "^3.0.2",
     "json-stable-stringify": "1.0.1",
     "thinky": "2.1.9"
   },
   "keywords": [
     "rethinkdb",
-    "socketcluster",
+    "asyngular",
     "realtime",
     "storage",
     "rest",
