@@ -12,9 +12,6 @@ let AGCRUDRethink = function (options) {
 
   this.options = Object.assign({}, options);
 
-  if (!this.options.logger) {
-    this.options.logger = console;
-  }
   if (!this.options.schema) {
     this.options.schema = {};
   }
@@ -23,7 +20,6 @@ let AGCRUDRethink = function (options) {
   this.schema = this.options.schema;
   this.thinky = thinky(this.options.thinkyOptions);
   this.options.thinky = this.thinky;
-  this.logger = this.options.logger;
 
   this.channelPrefix = 'crud>';
 
@@ -73,6 +69,12 @@ let AGCRUDRethink = function (options) {
 
   if (this.agServer) {
     this.filter = new Filter(this.agServer, this.options);
+
+    (async () => {
+      for await (let event of this.filter.listener('error')) {
+        this.emit('error', event);
+      }
+    })();
 
     this.publish = this.agServer.exchange.transmitPublish.bind(this.agServer.exchange);
 
@@ -614,7 +616,7 @@ AGCRUDRethink.prototype._read = function (query, callback, socket) {
         ModelClass.get(query.id).run((err, data) => {
           let error;
           if (err) {
-            this.logger.error(err);
+            this.emit('error', {error: err});
             error = new Error(`Failed to get resource with id ${query.id} from the database`);
           } else {
             error = null;
@@ -695,8 +697,9 @@ AGCRUDRethink.prototype._read = function (query, callback, socket) {
       async.parallel(tasks, (err, results) => {
         if (err) {
           let error = new Error(`Failed to generate view ${query.view} for type ${query.type} with viewParams ${JSON.stringify(query.viewParams)}`);
-          this.logger.error(err);
-          this.logger.error(error);
+          // Emit both the low level and high level error.
+          this.emit('error', {error: err});
+          this.emit('error', {error});
           loadedHandler(error);
         } else {
           loadedHandler(null, results[0], results[1]);
@@ -733,7 +736,7 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
 
   let savedHandler = (err, oldAffectedViewData, result) => {
     if (err) {
-      this.emit('warning', {warning: err});
+      this.emit('error', {error: err});
       callback && callback(err);
     } else {
       let resourceChannelName = this._getResourceChannelName(query);
@@ -918,7 +921,7 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
 
   let deletedHandler = (err, oldAffectedViewData, result) => {
     if (err) {
-      this.emit('warning', {warning: err});
+      this.emit('error', {error: err});
       callback && callback(err);
     } else {
       if (query.field) {

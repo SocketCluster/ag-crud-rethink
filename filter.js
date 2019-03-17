@@ -1,15 +1,15 @@
 const constructTransformedRethinkQuery = require('./query-transformer').constructTransformedRethinkQuery;
 const parseChannelResourceQuery = require('./channel-resource-parser').parseChannelResourceQuery;
+const AsyncStreamEmitter = require('async-stream-emitter');
 
 let Filter = function (agServer, options) {
-  // Setup Asyngular middleware for access control and filtering
+  AsyncStreamEmitter.call(this);
 
   this.options = options || {};
   this.schema = this.options.schema || {};
   this.thinky = this.options.thinky;
   this.cache = this.options.cache;
   this.agServer = agServer;
-  this.logger = this.options.logger; // TODO 2: Do not log directly, emit error instead.
 
   this._getModelFilter = (modelType, filterPhase) => {
     let modelSchema = this.schema[modelType];
@@ -151,6 +151,8 @@ let Filter = function (agServer, options) {
   });
 };
 
+Filter.prototype = Object.create(AsyncStreamEmitter.prototype);
+
 Filter.prototype.applyPostFilter = async function (req) {
   return new Promise((resolve, reject) => {
     this._applyPostFilter(req, (error, result) => {
@@ -208,9 +210,9 @@ Filter.prototype._applyPostFilter = function (req, next) {
         return;
       }
 
-      let queryResponseHandler = (err, resource) => {
-        if (err) {
-          this.logger.error(err);
+      let queryResponseHandler = (error, resource) => {
+        if (error) {
+          this.emit('error', {error});
           next(new Error('Executed an invalid query transformation'));
         } else {
           request.resource = resource;
