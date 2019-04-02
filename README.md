@@ -1,11 +1,11 @@
 # ag-crud-rethink
 Realtime CRUD data management layer/plugin for Asyngular using RethinkDB as the database.
 
-See https://github.com/socketcluster/ag-sample-inventory for a full working sample.
+See https://github.com/SocketCluster/ag-crud-rethink for a full working sample.
 
 ## Setup
 
-See https://github.com/socketcluster/ag-sample-inventory for sample app which demonstrates this component in action.
+See https://github.com/SocketCluster/ag-crud-rethink for sample app which demonstrates this component in action.
 
 This module is a plugin for Asyngular, so you need to have Asyngular installed: https://asyngular.io/
 Once Asyngular is installed and you have created a new project, you should navigate to your project's main directory and run:
