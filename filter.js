@@ -23,8 +23,20 @@ let Filter = function (agServer, options) {
     return modelFilters[filterPhase] || null;
   };
 
+  let middleware = this.options.middleware || {};
+
   agServer.setMiddleware(agServer.MIDDLEWARE_INBOUND, async (middlewareStream) => {
     for await (let action of middlewareStream) {
+      let middlewareFunction = middleware[action.type];
+      if (middlewareFunction) {
+        let {type, allow, block, ...simpleAction} = action;
+        try {
+          await middlewareFunction(simpleAction);
+        } catch (error) {
+          action.block(error);
+          continue;
+        }
+      }
       if (action.type === action.INVOKE) {
         if (action.procedure === 'create' || action.procedure === 'read' || action.procedure === 'update' || action.procedure === 'delete') {
           // If socket has a valid auth token, then allow emitting get or set events
