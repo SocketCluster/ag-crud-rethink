@@ -2,7 +2,7 @@ const constructTransformedRethinkQuery = require('./query-transformer').construc
 const parseChannelResourceQuery = require('./channel-resource-parser').parseChannelResourceQuery;
 const AsyncStreamEmitter = require('async-stream-emitter');
 
-let Filter = function (agServer, options) {
+let AccessController = function (agServer, options) {
   AsyncStreamEmitter.call(this);
 
   this.options = options || {};
@@ -11,16 +11,16 @@ let Filter = function (agServer, options) {
   this.cache = this.options.cache;
   this.agServer = agServer;
 
-  this._getModelFilter = (modelType, filterPhase) => {
+  this._getModelAccessFilter = (modelType, accessPhase) => {
     let modelSchema = this.schema[modelType];
     if (!modelSchema) {
       return null;
     }
-    let modelFilters = modelSchema.filters;
-    if (!modelFilters) {
+    let modelAccessFilters = modelSchema.access;
+    if (!modelAccessFilters) {
       return null;
     }
-    return modelFilters[filterPhase] || null;
+    return modelAccessFilters[accessPhase] || null;
   };
 
   let middleware = this.options.middleware || {};
@@ -42,8 +42,8 @@ let Filter = function (agServer, options) {
           // If socket has a valid auth token, then allow emitting get or set events
           let authToken = action.socket.authToken;
 
-          let preFilter = this._getModelFilter(action.data.type, 'pre');
-          if (preFilter) {
+          let preAccessFilter = this._getModelAccessFilter(action.data.type, 'pre');
+          if (preAccessFilter) {
             let crudRequest = {
               r: this.thinky.r,
               socket: action.socket,
@@ -52,7 +52,7 @@ let Filter = function (agServer, options) {
               query: action.data
             };
             try {
-              await preFilter(crudRequest);
+              await preAccessFilter(crudRequest);
             } catch (error) {
               if (typeof error === 'boolean') {
                 error = new Error('You are not permitted to perform a CRUD operation on the ' + action.data.type + ' resource with ID ' + action.data.id);
@@ -66,7 +66,7 @@ let Filter = function (agServer, options) {
             continue;
           }
           if (this.options.blockPreByDefault) {
-            let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + action.data.type + ' resource with ID ' + action.data.id + ' - No filters found');
+            let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + action.data.type + ' resource with ID ' + action.data.id + ' - No access filters found');
             crudBlockedError.name = 'CRUDBlockedError';
             crudBlockedError.type = 'pre';
             action.block(crudBlockedError);
@@ -106,7 +106,7 @@ let Filter = function (agServer, options) {
           channelResourceQuery.viewParams = action.data.viewParams;
         }
 
-        let continueWithPostFilter = async () => {
+        let continueWithPostAccessFilter = async () => {
           let subscribePostRequest = {
             socket: action.socket,
             action: 'subscribe',
@@ -115,7 +115,7 @@ let Filter = function (agServer, options) {
           };
           let result;
           try {
-            result = await this.applyPostFilter(subscribePostRequest);
+            result = await this.applyPostAccessFilter(subscribePostRequest);
           } catch (error) {
             action.block(error);
             return;
@@ -123,8 +123,8 @@ let Filter = function (agServer, options) {
           action.allow(result);
         };
 
-        let preFilter = this._getModelFilter(channelResourceQuery.type, 'pre');
-        if (preFilter) {
+        let preAccessFilter = this._getModelAccessFilter(channelResourceQuery.type, 'pre');
+        if (preAccessFilter) {
           let subscribePreRequest = {
             r: this.thinky.r,
             socket: action.socket,
@@ -133,7 +133,7 @@ let Filter = function (agServer, options) {
             query: channelResourceQuery
           };
           try {
-            await preFilter(subscribePreRequest);
+            await preAccessFilter(subscribePreRequest);
           } catch (error) {
             if (typeof error === 'boolean') {
               error = new Error('Cannot subscribe to ' + action.channel + ' channel');
@@ -143,17 +143,17 @@ let Filter = function (agServer, options) {
             action.block(error);
             continue;
           }
-          await continueWithPostFilter();
+          await continueWithPostAccessFilter();
           continue;
         }
         if (this.options.blockPreByDefault) {
-          let crudBlockedError = new Error('Cannot subscribe to ' + action.channel + ' channel - No filters found');
+          let crudBlockedError = new Error('Cannot subscribe to ' + action.channel + ' channel - No access filters found');
           crudBlockedError.name = 'CRUDBlockedError';
           crudBlockedError.type = 'pre';
           action.block(crudBlockedError);
           continue;
         }
-        await continueWithPostFilter();
+        await continueWithPostAccessFilter();
         continue;
       }
 
@@ -163,11 +163,11 @@ let Filter = function (agServer, options) {
   });
 };
 
-Filter.prototype = Object.create(AsyncStreamEmitter.prototype);
+AccessController.prototype = Object.create(AsyncStreamEmitter.prototype);
 
-Filter.prototype.applyPostFilter = async function (req) {
+AccessController.prototype.applyPostAccessFilter = async function (req) {
   return new Promise((resolve, reject) => {
-    this._applyPostFilter(req, (error, result) => {
+    this._applyPostAccessFilter(req, (error, result) => {
       if (error) {
         reject(error);
         return;
@@ -177,11 +177,11 @@ Filter.prototype.applyPostFilter = async function (req) {
   });
 };
 
-Filter.prototype._applyPostFilter = function (req, next) {
+AccessController.prototype._applyPostAccessFilter = function (req, next) {
   let query = req.query;
-  let postFilter = this._getModelFilter(query.type, 'post');
+  let postAccessFilter = this._getModelAccessFilter(query.type, 'post');
 
-  if (postFilter) {
+  if (postAccessFilter) {
     let request = {
       r: this.thinky.r,
       socket: req.socket,
@@ -193,10 +193,10 @@ Filter.prototype._applyPostFilter = function (req, next) {
       request.resource = req.resource;
     }
 
-    let continueWithPostFilter = () => {
+    let continueWithPostAccessFilter = () => {
       (async () => {
         try {
-          await postFilter(request);
+          await postAccessFilter(request);
         } catch (error) {
           if (typeof error === 'boolean') {
             error = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id);
@@ -228,7 +228,7 @@ Filter.prototype._applyPostFilter = function (req, next) {
           next(new Error('Executed an invalid query transformation'));
         } else {
           request.resource = resource;
-          continueWithPostFilter();
+          continueWithPostAccessFilter();
         }
       };
 
@@ -249,11 +249,11 @@ Filter.prototype._applyPostFilter = function (req, next) {
       }
 
     } else {
-      continueWithPostFilter();
+      continueWithPostAccessFilter();
     }
   } else {
     if (this.options.blockPostByDefault) {
-      let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id + ' - No filters found');
+      let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id + ' - No access filters found');
       crudBlockedError.name = 'CRUDBlockedError';
       crudBlockedError.type = 'post';
       next(crudBlockedError);
@@ -263,4 +263,4 @@ Filter.prototype._applyPostFilter = function (req, next) {
   }
 };
 
-module.exports = Filter;
+module.exports = AccessController;

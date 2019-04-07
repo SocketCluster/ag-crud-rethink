@@ -1,6 +1,6 @@
 const thinky = require('thinky');
 const async = require('async');
-const Filter = require('./filter');
+const AccessController = require('./access-controller');
 const Cache = require('./cache');
 const AsyncStreamEmitter = require('async-stream-emitter');
 const jsonStableStringify = require('json-stable-stringify');
@@ -84,10 +84,10 @@ let AGCRUDRethink = function (options) {
   this._resourceReadBuffer = {};
 
   if (this.agServer) {
-    this.filter = new Filter(this.agServer, this.options);
+    this.accessFilter = new AccessController(this.agServer, this.options);
 
     (async () => {
-      for await (let event of this.filter.listener('error')) {
+      for await (let event of this.accessFilter.listener('error')) {
         this.emit('error', event);
       }
     })();
@@ -561,14 +561,14 @@ AGCRUDRethink.prototype._read = function (query, callback, socket) {
       return;
     }
     // If socket does not exist, then the CRUD operation comes from the server-side
-    // and we don't need to pass it through a filter.
-    let applyPostFilter;
-    if (socket && this.filter) {
-      applyPostFilter = this.filter.applyPostFilter.bind(this.filter);
+    // and we don't need to pass it through an accessFilter.
+    let applyPostAccessFilter;
+    if (socket && this.accessFilter) {
+      applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
     } else {
-      applyPostFilter = () => Promise.resolve();
+      applyPostAccessFilter = () => Promise.resolve();
     }
-    let filterRequest = {
+    let accessFilterRequest = {
       r: this.thinky.r,
       socket,
       action: 'read',
@@ -578,7 +578,7 @@ AGCRUDRethink.prototype._read = function (query, callback, socket) {
     };
 
     try {
-      await applyPostFilter(filterRequest);
+      await applyPostAccessFilter(accessFilterRequest);
     } catch (error) {
       callback && callback(error);
       return;
@@ -832,15 +832,15 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
     let tasks = [];
 
     // If socket does not exist, then the CRUD operation comes from the server-side
-    // and we don't need to pass it through a filter.
-    let applyPostFilter;
-    if (socket && this.filter) {
-      applyPostFilter = this.filter.applyPostFilter.bind(this.filter);
+    // and we don't need to pass it through a accessFilter.
+    let applyPostAccessFilter;
+    if (socket && this.accessFilter) {
+      applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
     } else {
-      applyPostFilter = () => Promise.resolve();
+      applyPostAccessFilter = () => Promise.resolve();
     }
 
-    let filterRequest = {
+    let accessFilterRequest = {
       r: this.thinky.r,
       socket,
       action: 'update',
@@ -866,9 +866,9 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
         tasks.push(loadModelInstanceAndGetViewData);
 
         tasks.push(async (cb) => {
-          filterRequest.resource = modelInstance;
+          accessFilterRequest.resource = modelInstance;
           try {
-            await applyPostFilter(filterRequest);
+            await applyPostAccessFilter(accessFilterRequest);
           } catch (error) {
             cb(error);
             return;
@@ -882,9 +882,9 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
         tasks.push(loadModelInstanceAndGetViewData);
 
         tasks.push(async (cb) => {
-          filterRequest.resource = modelInstance;
+          accessFilterRequest.resource = modelInstance;
           try {
-            await applyPostFilter(filterRequest);
+            await applyPostAccessFilter(accessFilterRequest);
           } catch (error) {
             cb(error);
             return;
@@ -992,15 +992,15 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
       });
 
       // If socket does not exist, then the CRUD operation comes from the server-side
-      // and we don't need to pass it through a filter.
-      let applyPostFilter;
-      if (socket && this.filter) {
-        applyPostFilter = this.filter.applyPostFilter.bind(this.filter);
+      // and we don't need to pass it through a accessFilter.
+      let applyPostAccessFilter;
+      if (socket && this.accessFilter) {
+        applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
       } else {
-        applyPostFilter = () => Promise.resolve();
+        applyPostAccessFilter = () => Promise.resolve();
       }
 
-      let filterRequest = {
+      let accessFilterRequest = {
         r: this.thinky.r,
         socket,
         action: 'delete',
@@ -1010,9 +1010,9 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
 
       if (query.field == null) {
         tasks.push(async (cb) => {
-          filterRequest.resource = modelInstance;
+          accessFilterRequest.resource = modelInstance;
           try {
-            await applyPostFilter(filterRequest);
+            await applyPostAccessFilter(accessFilterRequest);
           } catch (error) {
             cb(error);
             return;
@@ -1021,9 +1021,9 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
         });
       } else {
         tasks.push(async (cb) => {
-          filterRequest.resource = modelInstance;
+          accessFilterRequest.resource = modelInstance;
           try {
-            await applyPostFilter(filterRequest);
+            await applyPostAccessFilter(accessFilterRequest);
           } catch (error) {
             cb(error);
             return;
