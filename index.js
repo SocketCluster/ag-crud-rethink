@@ -29,7 +29,23 @@ let AGCRUDRethink = function (options) {
 
   Object.keys(this.schema).forEach((modelName) => {
     let modelSchema = this.schema[modelName];
-    this.models[modelName] = this.thinky.createModel(modelName, modelSchema.fields);
+    let model = this.thinky.createModel(modelName, modelSchema.fields);
+    this.models[modelName] = model;
+    let indexes = modelSchema.indexes || [];
+    indexes.forEach((indexData) => {
+      if (typeof indexData === 'string') {
+        model.ensureIndex(indexData);
+      } else {
+        if (!indexData.name) {
+          throw new Error(
+            `One of the indexes for the ${
+              modelName
+            } model schema was invalid. Each index must either be a string or an object with a name property. If it is an object, it may also specify optional fn and options properties.`
+          );
+        }
+        model.ensureIndex(indexData.name, indexData.fn, indexData.options);
+      }
+    });
   });
   this.options.models = this.models;
 
