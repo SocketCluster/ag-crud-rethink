@@ -320,10 +320,16 @@ AGCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
         id: updateDetails.id,
         field: fieldName
       });
-      this.publish(resourcePropertyChannelName, {
-        type: 'update',
-        value: updatedFields[fieldName]
-      });
+      let fieldValue = updatedFields[fieldName];
+      if (typeof fieldValue === 'function') {
+        // Do not publish raw RethinkDB predicates or functions.
+        this.publish(resourcePropertyChannelName);
+      } else {
+        this.publish(resourcePropertyChannelName, {
+          type: 'update',
+          value: fieldValue
+        });
+      }
     });
   }
 };
@@ -763,10 +769,15 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
         if (cleanValue === undefined) {
           cleanValue = null;
         }
-        this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
-          type: 'update',
-          value: cleanValue
-        });
+        if (typeof cleanValue === 'function') {
+          // Do not publish raw RethinkDB predicates or functions.
+          this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field);
+        } else {
+          this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
+            type: 'update',
+            value: cleanValue
+          });
+        }
       } else {
         let queryValue = query.value || {};
         Object.keys(queryValue).forEach((field) => {
@@ -774,10 +785,15 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
           if (value === undefined) {
             value = null;
           }
-          this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
-            type: 'update',
-            value
-          });
+          if (typeof value === 'function') {
+            // Do not publish raw RethinkDB predicates or functions.
+            this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field);
+          } else {
+            this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
+              type: 'update',
+              value
+            });
+          }
         });
       }
 
