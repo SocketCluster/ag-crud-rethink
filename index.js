@@ -480,6 +480,8 @@ AGCRUDRethink.prototype._create = function (query, callback, socket) {
 
   let savedHandler = (err, result) => {
     if (err) {
+      this.emit('error', {error: err});
+      this.emit('createFail', {query, error: err});
       callback && callback(err);
     } else {
       let resourceChannelName = this._getResourceChannelName({
@@ -496,6 +498,7 @@ AGCRUDRethink.prototype._create = function (query, callback, socket) {
         });
       });
 
+      this.emit('create', {query, result});
       callback && callback(null, result.id);
     }
   };
@@ -759,6 +762,7 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
   let savedHandler = (err, oldAffectedViewData, result) => {
     if (err) {
       this.emit('error', {error: err});
+      this.emit('updateFail', {query, error: err});
       callback && callback(err);
     } else {
       let resourceChannelName = this._getResourceChannelName(query);
@@ -831,6 +835,7 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
           });
         }
       });
+      this.emit('update', {query, result});
       callback && callback();
     }
   };
@@ -954,6 +959,7 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
   let deletedHandler = (err, oldAffectedViewData, result) => {
     if (err) {
       this.emit('error', {error: err});
+      this.emit('deleteFail', {query, error: err});
       callback && callback(err);
     } else {
       if (query.field) {
@@ -981,6 +987,7 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
           });
         });
       }
+      this.emit('delete', {query, result});
       callback && callback();
     }
   };
