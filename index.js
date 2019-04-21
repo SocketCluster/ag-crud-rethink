@@ -29,11 +29,7 @@ let AGCRUDRethink = function (options) {
 
   Object.keys(this.schema).forEach((modelName) => {
     let modelSchema = this.schema[modelName];
-    let thinkyOptions = {};
-    if (modelSchema.primaryKey != null) {
-      thinkyOptions.pk = modelSchema.primaryKey;
-    }
-    let model = this.thinky.createModel(modelName, modelSchema.fields, thinkyOptions);
+    let model = this.thinky.createModel(modelName, modelSchema.fields);
     this.models[modelName] = model;
     let indexes = modelSchema.indexes || [];
     indexes.forEach((indexData) => {
