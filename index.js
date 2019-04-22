@@ -36,9 +36,17 @@ let AGCRUDRethink = function (options) {
     Object.keys(modelSchemaViews).forEach((viewName) => {
       let viewSchema = modelSchemaViews[viewName];
       let paramFields = viewSchema.paramFields || {};
+
       let foreignAffectingFieldsMap = viewSchema.foreignAffectingFields || {};
       Object.keys(foreignAffectingFieldsMap).forEach((type) => {
-        let affectingFields = foreignAffectingFieldsMap[type]; // TODO 2 throw error if type does not exist at the top level.
+        if (!this.schema[type]) {
+          throw new Error(
+            `The ${type} type does not exist so it cannot be declared as a key of foreignAffectingFields on the ${
+              viewName
+            } view on the ${modelName} type.`
+          );
+        }
+        let affectingFields = foreignAffectingFieldsMap[type];
 
         if (!this._foreignViews[type]) {
           this._foreignViews[type] = {};
@@ -55,6 +63,13 @@ let AGCRUDRethink = function (options) {
 
     let relations = modelSchema.relations || {};
     Object.keys(relations).forEach((sourceType) => {
+      if (!this.schema[sourceType]) {
+        throw new Error(
+          `The ${sourceType} type does not exist so it cannot be declared as a relation on the ${
+            modelName
+          } type.`
+        );
+      }
       let fieldRelations = relations[sourceType];
       if (!this._typeRelations[sourceType]) {
         this._typeRelations[sourceType] = {};
@@ -166,6 +181,13 @@ AGCRUDRethink.prototype._handleResourceChange = function (resource) {
 };
 
 AGCRUDRethink.prototype._mapResourceField = function (fieldName, fieldValue, sourceType, targetType) {
+  if (sourceType === targetType) {
+    return {
+      success: true,
+      value: fieldValue
+    };
+  }
+
   if (
     this._typeRelations[sourceType] &&
     this._typeRelations[sourceType][targetType] &&
