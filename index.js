@@ -26,9 +26,44 @@ let AGCRUDRethink = function (options) {
   if (!this.options.defaultPageSize) {
     this.options.defaultPageSize = 10;
   }
+  this._foreignViews = {};
+  this._typeRelations = {};
 
   Object.keys(this.schema).forEach((modelName) => {
     let modelSchema = this.schema[modelName];
+
+    let modelSchemaViews = modelSchema.views || {};
+    Object.keys(modelSchemaViews).forEach((viewName) => {
+      let viewSchema = modelSchemaViews[viewName];
+      let paramFields = viewSchema.paramFields || {};
+      let foreignAffectingFieldsMap = viewSchema.foreignAffectingFields || {};
+      Object.keys(foreignAffectingFieldsMap).forEach((type) => {
+        let affectingFields = foreignAffectingFieldsMap[type]; // TODO 2 throw error if type does not exist at the top level.
+
+        if (!this._foreignViews[type]) {
+          this._foreignViews[type] = {};
+        }
+        if (!this._foreignViews[type][viewName]) {
+          this._foreignViews[type][viewName] = {
+            paramFields,
+            affectingFields,
+            parentType: modelName
+          };
+        }
+      });
+    });
+
+    let relations = modelSchema.relations || {};
+    Object.keys(relations).forEach((sourceType) => {
+      let fieldRelations = relations[sourceType];
+      if (!this._typeRelations[sourceType]) {
+        this._typeRelations[sourceType] = {};
+      }
+      if (!this._typeRelations[sourceType][modelName]) {
+        this._typeRelations[sourceType][modelName] = fieldRelations;
+      }
+    });
+
     let model = this.thinky.createModel(modelName, modelSchema.fields);
     this.models[modelName] = model;
     let indexes = modelSchema.indexes || [];
@@ -47,6 +82,7 @@ let AGCRUDRethink = function (options) {
       }
     });
   });
+
   this.options.models = this.models;
 
   let cacheDisabled;
@@ -129,6 +165,27 @@ AGCRUDRethink.prototype._handleResourceChange = function (resource) {
   this.cache.clear(resource);
 };
 
+AGCRUDRethink.prototype._mapResourceField = function (fieldName, fieldValue, sourceType, targetType) {
+  if (
+    this._typeRelations[sourceType] &&
+    this._typeRelations[sourceType][targetType] &&
+    this._typeRelations[sourceType][targetType][fieldName]
+  ) {
+    let relationFn = this._typeRelations[sourceType][targetType][fieldName];
+    return {
+      success: true,
+      value: relationFn(fieldValue)
+    };
+  }
+  return {
+    success: false
+  };
+};
+
+AGCRUDRethink.prototype._getForeignViews = function (type) {
+  return this._foreignViews[type] || {};
+};
+
 AGCRUDRethink.prototype._getViews = function (type) {
   let typeSchema = this.schema[type] || {};
   return typeSchema.views || {};
@@ -203,20 +260,53 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
   let resource = updateDetails.resource || {};
 
   let viewSchemaMap = this._getViews(updateDetails.type);
+  let foreignViewsMap = this._getForeignViews(updateDetails.type);
 
-  Object.keys(viewSchemaMap).forEach((viewName) => {
-    let viewSchema = viewSchemaMap[viewName];
+  let allViewSchemas = Object.keys(viewSchemaMap)
+  .map((viewName) => {
+    return {
+      name: viewName,
+      type: updateDetails.type,
+      schema: viewSchemaMap[viewName]
+    };
+  })
+  .concat(
+    Object.keys(foreignViewsMap).map((viewName) => {
+      let viewSchema = foreignViewsMap[viewName];
+      return {
+        name: viewName,
+        type: viewSchema.parentType,
+        schema: viewSchema
+      };
+    })
+  );
+
+  allViewSchemas.forEach((viewData) => {
+    let viewName = viewData.name;
+    let viewSchema = viewData.schema;
     let paramFields = viewSchema.paramFields || [];
     let affectingFields = viewSchema.affectingFields || [];
 
     let params = {};
     let affectingData = {};
+
     paramFields.forEach((fieldName) => {
-      params[fieldName] = resource[fieldName];
-      affectingData[fieldName] = resource[fieldName];
+      let {success, value} = this._mapResourceField(resource, updateDetails.type, viewData.type);
+      if (success) {
+        params[fieldName] = value;
+        affectingData[fieldName] = value;
+      } else {
+        params[fieldName] = resource[fieldName];
+        affectingData[fieldName] = resource[fieldName];
+      }
     });
     affectingFields.forEach((fieldName) => {
-      affectingData[fieldName] = resource[fieldName];
+      let {success, value} = this._mapResourceField(resource, updateDetails.type, viewData.type);
+      if (success) {
+        affectingData[fieldName] = value;
+      } else {
+        affectingData[fieldName] = resource[fieldName];
+      }
     });
 
     if (updateDetails.fields) {
@@ -245,7 +335,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
       if (isViewAffectedByUpdate) {
         affectedViews.push({
           view: viewName,
-          type: updateDetails.type,
+          type: viewData.type,
           params,
           affectingData
         });
@@ -253,7 +343,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     } else {
       affectedViews.push({
         view: viewName,
-        type: updateDetails.type,
+        type: viewData.type,
         params,
         affectingData
       });
@@ -492,10 +582,7 @@ AGCRUDRethink.prototype._create = function (query, callback, socket) {
 
       let affectedViewData = this.getQueryAffectedViews(query, result);
       affectedViewData.forEach((viewData) => {
-        this.publish(this._getViewChannelName(viewData.view, viewData.params, query.type), {
-          type: 'create',
-          id: result.id
-        });
+        this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
       });
 
       this.emit('create', {query, result});
@@ -803,36 +890,24 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
 
       let oldViewDataMap = {};
       oldAffectedViewData.forEach((viewData) => {
-        oldViewDataMap[viewData.view] = viewData;
+        oldViewDataMap[`${viewData.view}:${viewData.type}`] = viewData;
       });
 
       let newAffectedViewData = this.getQueryAffectedViews(query, result);
 
       newAffectedViewData.forEach((viewData) => {
-        let oldViewData = oldViewDataMap[viewData.view] || {};
+        let oldViewData = oldViewDataMap[`${viewData.view}:${viewData.type}`] || {};
         let areViewParamsEqual = this._areObjectsEqual(oldViewData.params, viewData.params);
 
         if (areViewParamsEqual) {
           let areAffectingDataEqual = this._areObjectsEqual(oldViewData.affectingData, viewData.affectingData);
 
           if (!areAffectingDataEqual) {
-            this.publish(this._getViewChannelName(viewData.view, viewData.params, query.type), {
-              type: 'update',
-              action: 'move',
-              id: query.id
-            });
+            this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
           }
         } else {
-          this.publish(this._getViewChannelName(viewData.view, oldViewData.params, query.type), {
-            type: 'update',
-            action: 'remove',
-            id: query.id
-          });
-          this.publish(this._getViewChannelName(viewData.view, viewData.params, query.type), {
-            type: 'update',
-            action: 'add',
-            id: query.id
-          });
+          this.publish(this._getViewChannelName(oldViewData.view, oldViewData.params, oldViewData.type));
+          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
         }
       });
       this.emit('update', {query, result});
@@ -981,10 +1056,7 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
         });
 
         oldAffectedViewData.forEach((viewData) => {
-          this.publish(this._getViewChannelName(viewData.view, viewData.params, query.type), {
-            type: 'delete',
-            id: query.id
-          });
+          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
         });
       }
       this.emit('delete', {query, result});
