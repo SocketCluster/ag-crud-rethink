@@ -31,21 +31,45 @@ let AGCRUDRethink = function (options) {
 
   Object.keys(this.schema).forEach((modelName) => {
     let modelSchema = this.schema[modelName];
-
     let modelSchemaViews = modelSchema.views || {};
+    let relations = modelSchema.relations || {};
+
     Object.keys(modelSchemaViews).forEach((viewName) => {
       let viewSchema = modelSchemaViews[viewName];
-      let paramFields = viewSchema.paramFields || {};
+      let paramFields = viewSchema.paramFields || [];
 
       let foreignAffectingFieldsMap = viewSchema.foreignAffectingFields || {};
       Object.keys(foreignAffectingFieldsMap).forEach((type) => {
         if (!this.schema[type]) {
           throw new Error(
-            `The ${type} type does not exist so it cannot be declared as a key of foreignAffectingFields on the ${
+            `The ${type} model does not exist so it cannot be declared as a key of foreignAffectingFields on the ${
               viewName
-            } view on the ${modelName} type.`
+            } view on the ${modelName} model.`
           );
         }
+
+        let modelFields = this.schema[type].fields || {};
+        let modelRelations = relations[type] || {};
+
+        paramFields.forEach((fieldName) => {
+          let foreignModelHasParamField = modelFields.hasOwnProperty(fieldName);
+          let foreignRelationHasParamField = modelRelations.hasOwnProperty(fieldName);
+
+          if (!foreignModelHasParamField && !foreignRelationHasParamField) {
+            throw new Error(
+              `The ${type} model does not have a matching ${
+                fieldName
+              } field so it cannot be used as a foreignAffectingFields model for the ${
+                viewName
+              } view which is defined on the ${modelName} model. Also, the ${
+                fieldName
+              } field could not be derived from a relation defined on the ${
+                modelName
+              } model.`
+            );
+          }
+        });
+
         let affectingFields = foreignAffectingFieldsMap[type];
 
         if (!this._foreignViews[type]) {
@@ -61,13 +85,12 @@ let AGCRUDRethink = function (options) {
       });
     });
 
-    let relations = modelSchema.relations || {};
     Object.keys(relations).forEach((sourceType) => {
       if (!this.schema[sourceType]) {
         throw new Error(
-          `The ${sourceType} type does not exist so it cannot be declared as a relation on the ${
+          `The ${sourceType} model does not exist so it cannot be declared as a relation on the ${
             modelName
-          } type.`
+          } model.`
         );
       }
       let fieldRelations = relations[sourceType];
