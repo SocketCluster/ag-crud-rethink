@@ -116,7 +116,11 @@ let AGCRUDRethink = function (options) {
             } model schema was invalid. Each index must either be a string or an object with a name property. If it is an object, it may also specify optional fn and options properties.`
           );
         }
-        model.ensureIndex(indexData.name, indexData.fn, indexData.options);
+        if (indexData.type === 'compound') {
+          model.ensureIndex(indexData.name, indexData.fn(this.thinky.r));
+        } else {
+          model.ensureIndex(indexData.name, indexData.fn, indexData.options);
+        }
       }
     });
   });
