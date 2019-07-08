@@ -1255,22 +1255,13 @@ AGCRUDRethink.prototype._validateViewQuery = function (query) {
     return new Error(`Invalid view query - The view ${query.view} was not defined in the schema under the type ${query.type}`);
   }
   if (viewSchema.paramFields && viewSchema.paramFields.length > 0) {
-    let viewParamsFormatError = this._validateRequiredViewParams(query.viewParams)
+    let viewParamsFormatError = this._validateRequiredViewParams(query.viewParams);
     if (viewParamsFormatError) {
       return viewParamsFormatError;
     }
-    let missingFields = [];
-    viewSchema.paramFields.forEach((field) => {
-      if (query.viewParams[field] === undefined) {
-        missingFields.push(field);
-      }
-    });
-    if (missingFields.length > 0) {
-      return new Error(`Invalid view query - The view ${query.view} under the type ${query.type} requires additional fields to meet paramFields requirements. Missing: ${missingFields.join(', ')}`);
-    }
   }
   if (viewSchema.primaryKeys && viewSchema.primaryKeys.length > 0) {
-    let viewParamsFormatError = this._validateRequiredViewParams(query.viewParams)
+    let viewParamsFormatError = this._validateRequiredViewParams(query.viewParams);
     if (viewParamsFormatError) {
       return viewParamsFormatError;
     }
