@@ -483,7 +483,7 @@ AGCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
     view: The name of the view.
     params: The predicate object/value which defines the affected view.
 */
-AGCRUDRethink.prototype.notifyViewUpdate = function (updateDetails) {
+AGCRUDRethink.prototype.notifyViewUpdate = function (updateDetails, operation) {
   if (updateDetails == null) {
     let invalidArgumentsError = new Error('The updateDetails object was not specified');
     invalidArgumentsError.name = 'InvalidArgumentsError';
@@ -509,7 +509,11 @@ AGCRUDRethink.prototype.notifyViewUpdate = function (updateDetails) {
     updateDetails.params,
     updateDetails.type
   );
-  this.publish(viewChannelName);
+  if (operation === undefined) {
+    this.publish(viewChannelName);
+  } else {
+    this.publish(viewChannelName, operation);
+  }
 };
 
 /*
@@ -567,15 +571,7 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
     fields: updatedFieldsList
   });
 
-  oldResourceAffectedViews.forEach((viewData) => {
-    oldViewParamsMap[viewData.view] = viewData.params;
-    this.notifyViewUpdate({
-      type: viewData.type,
-      view: viewData.view,
-      params: viewData.params
-    });
-  });
-
+  let newViewDataMap = {};
   let newResourceAffectedViews = this.getAffectedViews({
     type: updateDetails.type,
     resource: newResource,
@@ -583,12 +579,65 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
   });
 
   newResourceAffectedViews.forEach((viewData) => {
+    newViewDataMap[viewData.view] = viewData;
+  });
+
+  oldResourceAffectedViews.forEach((viewData) => {
+    oldViewParamsMap[viewData.view] = viewData.params;
+  });
+
+  oldResourceAffectedViews.forEach((viewData) => {
+    let operation;
+    if (updateDetails.newResource == null) {
+      operation = {
+        type: 'delete',
+        value: {
+          id: refResource.id,
+          ...viewData.affectingData
+        }
+      };
+    } else {
+      let newViewData = newViewDataMap[viewData.view];
+      operation = {
+        type: 'update',
+        value: {
+          id: refResource.id,
+          ...newViewData.affectingData
+        }
+      };
+    }
+    this.notifyViewUpdate({
+      type: viewData.type,
+      view: viewData.view,
+      params: viewData.params
+    }, operation);
+  });
+
+  newResourceAffectedViews.forEach((viewData) => {
     if (!this._areObjectsEqual(oldViewParamsMap[viewData.view], viewData.params)) {
+      let operation;
+      if (updateDetails.oldResource == null) {
+        operation = {
+          type: 'create',
+          value: {
+            id: refResource.id,
+            ...viewData.affectingData
+          }
+        };
+      } else {
+        operation = {
+          type: 'update',
+          value: {
+            id: refResource.id,
+            ...viewData.affectingData
+          }
+        };
+      }
       this.notifyViewUpdate({
         type: viewData.type,
         view: viewData.view,
         params: viewData.params
-      });
+      }, operation);
     }
   });
 };
@@ -631,7 +680,13 @@ AGCRUDRethink.prototype._create = function (query, callback, socket) {
 
       let affectedViewData = this.getQueryAffectedViews(query, result);
       affectedViewData.forEach((viewData) => {
-        this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
+        this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+          type: 'create',
+          value: {
+            id: result.id,
+            ...viewData.affectingData
+          }
+        });
       });
 
       this.emit('create', {query, result});
@@ -952,11 +1007,29 @@ AGCRUDRethink.prototype._update = function (query, callback, socket) {
           let areAffectingDataEqual = this._areObjectsEqual(oldViewData.affectingData, viewData.affectingData);
 
           if (!areAffectingDataEqual) {
-            this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
+            this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+              type: 'update',
+              value: {
+                id: query.id,
+                ...viewData.affectingData
+              }
+            });
           }
         } else {
-          this.publish(this._getViewChannelName(oldViewData.view, oldViewData.params, oldViewData.type));
-          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
+          this.publish(this._getViewChannelName(oldViewData.view, oldViewData.params, oldViewData.type), {
+            type: 'update',
+            value: {
+              id: query.id,
+              ...viewData.affectingData
+            }
+          });
+          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+            type: 'update',
+            value: {
+              id: query.id,
+              ...viewData.affectingData
+            }
+          });
         }
       });
       this.emit('update', {query, result});
@@ -1105,7 +1178,13 @@ AGCRUDRethink.prototype._delete = function (query, callback, socket) {
         });
 
         oldAffectedViewData.forEach((viewData) => {
-          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type));
+          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+            type: 'delete',
+            value: {
+              id: query.id,
+              ...viewData.affectingData
+            }
+          });
         });
       }
       this.emit('delete', {query, result});
