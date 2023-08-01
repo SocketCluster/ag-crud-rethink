@@ -29,6 +29,12 @@ let AGCRUDRethink = function (options) {
   this._foreignViews = {};
   this._typeRelations = {};
 
+  if (this.options.clientErrorMapper) {
+    this.clientErrorMapper = this.options.clientErrorMapper;
+  } else {
+    this.clientErrorMapper = (error) => error;
+  }
+
   Object.keys(this.schema).forEach((modelName) => {
     let modelSchema = this.schema[modelName];
     let modelSchemaViews = modelSchema.views || {};
@@ -1274,7 +1280,9 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
       try {
         result = await this.create(request.data, socket);
       } catch (error) {
-        request.error(error);
+        request.error(
+          this.clientErrorMapper(error, 'create')
+        );
         continue;
       }
       request.end(result);
@@ -1286,7 +1294,9 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
       try {
         result = await this.read(request.data, socket);
       } catch (error) {
-        request.error(error);
+        request.error(
+          this.clientErrorMapper(error, 'read')
+        );
         continue;
       }
       request.end(result);
@@ -1297,7 +1307,9 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
       try {
         await this.update(request.data, socket);
       } catch (error) {
-        request.error(error);
+        request.error(
+          this.clientErrorMapper(error, 'update')
+        );
         continue;
       }
       request.end();
@@ -1308,7 +1320,9 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
       try {
         await this.delete(request.data, socket);
       } catch (error) {
-        request.error(error);
+        request.error(
+          this.clientErrorMapper(error, 'delete')
+        );
         continue;
       }
       request.end();
