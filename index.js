@@ -1281,7 +1281,7 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
         result = await this.create(request.data, socket);
       } catch (error) {
         request.error(
-          this.clientErrorMapper(error, 'create')
+          this.clientErrorMapper(error, 'create', request.data)
         );
         continue;
       }
@@ -1295,7 +1295,7 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
         result = await this.read(request.data, socket);
       } catch (error) {
         request.error(
-          this.clientErrorMapper(error, 'read')
+          this.clientErrorMapper(error, 'read', request.data)
         );
         continue;
       }
@@ -1308,7 +1308,7 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
         await this.update(request.data, socket);
       } catch (error) {
         request.error(
-          this.clientErrorMapper(error, 'update')
+          this.clientErrorMapper(error, 'update', request.data)
         );
         continue;
       }
@@ -1321,7 +1321,7 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
         await this.delete(request.data, socket);
       } catch (error) {
         request.error(
-          this.clientErrorMapper(error, 'delete')
+          this.clientErrorMapper(error, 'delete', request.data)
         );
         continue;
       }
