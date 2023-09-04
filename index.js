@@ -18,7 +18,7 @@ let AGCRUDRethink = function (options) {
 
   this.models = {};
   this.schema = this.options.schema;
-  this.thinky = thinky(this.options.thinkyOptions);
+  this.thinky = thinky(this.options.databaseOptions);
   this.options.thinky = this.thinky;
 
   this.channelPrefix = 'crud>';
@@ -108,7 +108,17 @@ let AGCRUDRethink = function (options) {
       }
     });
 
-    let model = this.thinky.createModel(modelName, modelSchema.fields);
+    let schemaOptions = modelSchema.schemaOptions || {};
+    let thinkySchemaOptions = {
+      enforce_extra: schemaOptions.enforceExtra || 'strict',
+      enforce_missing: schemaOptions.enforceMissing || true,
+      enforce_type: schemaOptions.enforceType || 'strict'
+    };
+    if (schemaOptions.table) {
+      thinkySchemaOptions.table = schemaOptions.table;
+    }
+
+    let model = this.thinky.createModel(modelName, modelSchema.fields, thinkySchemaOptions);
     this.models[modelName] = model;
     let indexes = modelSchema.indexes || [];
     indexes.forEach((indexData) => {
@@ -651,7 +661,7 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
 // Add a new document to a collection. This will send a change notification to each
 // affected view (taking into account the affected page number within each view).
 // This allows views to update themselves on the front-end in real-time.
-AGCRUDRethink.prototype.create = async function (query, socket) {
+AGCRUDRethink.prototype.create = async function (query, options, socket) {
   return new Promise((resolve, reject) => {
     this._create(query, (err, result) => {
       if (err) {
@@ -659,11 +669,11 @@ AGCRUDRethink.prototype.create = async function (query, socket) {
         return;
       }
       resolve(result);
-    }, socket);
+    }, options, socket);
   });
 };
 
-AGCRUDRethink.prototype._create = function (query, callback, socket) {
+AGCRUDRethink.prototype._create = function (query, callback, options, socket) {
   let validationError = this._validateQuery(query);
   if (validationError) {
     callback && callback(validationError);
@@ -706,7 +716,22 @@ AGCRUDRethink.prototype._create = function (query, callback, socket) {
     savedHandler(error);
   } else if (typeof query.value === 'object') {
     let instance = new ModelClass(query.value);
-    instance.save(savedHandler);
+    try {
+      instance.validate();
+    } catch (err) {
+      savedHandler(err);
+      return;
+    }
+    // Insert directly using RethinkDB client to support insert options.
+    this.thinky.r.table(query.type).insert(query.value, options).run()
+      .then((result) => {
+        if (result.errors) {
+          savedHandler(this.thinky.Errors.create(result.first_error));
+          return;
+        }
+        savedHandler(null, result);
+      })
+      .catch((err) => savedHandler(err));
   } else {
     let error = new Error('Cannot create a document from a primitive - Must be an object');
     error.name = 'CRUDInvalidParams';
@@ -1278,7 +1303,7 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
     for await (let request of socket.procedure('create')) {
       let result;
       try {
-        result = await this.create(request.data, socket);
+        result = await this.create(request.data, null, socket);
       } catch (error) {
         request.error(
           this.clientErrorMapper(error, 'create', request.data)
