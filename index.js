@@ -661,7 +661,7 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
 // Add a new document to a collection. This will send a change notification to each
 // affected view (taking into account the affected page number within each view).
 // This allows views to update themselves on the front-end in real-time.
-AGCRUDRethink.prototype.create = async function (query, options, socket) {
+AGCRUDRethink.prototype.create = async function (query, socket) {
   return new Promise((resolve, reject) => {
     this._create(query, (err, result) => {
       if (err) {
@@ -669,11 +669,11 @@ AGCRUDRethink.prototype.create = async function (query, options, socket) {
         return;
       }
       resolve(result);
-    }, options, socket);
+    }, socket);
   });
 };
 
-AGCRUDRethink.prototype._create = function (query, callback, options, socket) {
+AGCRUDRethink.prototype._create = function (query, callback, socket) {
   let validationError = this._validateQuery(query);
   if (validationError) {
     callback && callback(validationError);
@@ -716,22 +716,7 @@ AGCRUDRethink.prototype._create = function (query, callback, options, socket) {
     savedHandler(error);
   } else if (typeof query.value === 'object') {
     let instance = new ModelClass(query.value);
-    try {
-      instance.validate();
-    } catch (err) {
-      savedHandler(err);
-      return;
-    }
-    // Insert directly using RethinkDB client to support insert options.
-    this.thinky.r.table(query.type).insert(query.value, options).run()
-      .then((result) => {
-        if (result.errors) {
-          savedHandler(this.thinky.Errors.create(result.first_error));
-          return;
-        }
-        savedHandler(null, result);
-      })
-      .catch((err) => savedHandler(err));
+    instance.save(savedHandler);
   } else {
     let error = new Error('Cannot create a document from a primitive - Must be an object');
     error.name = 'CRUDInvalidParams';
@@ -1303,7 +1288,7 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
     for await (let request of socket.procedure('create')) {
       let result;
       try {
-        result = await this.create(request.data, null, socket);
+        result = await this.create(request.data, socket);
       } catch (error) {
         request.error(
           this.clientErrorMapper(error, 'create', request.data)
