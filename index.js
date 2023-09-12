@@ -18,6 +18,12 @@ let AGCRUDRethink = function (options) {
 
   this.models = {};
   this.schema = this.options.schema;
+  this.schemaOptions = {
+    enforceExtra: 'strict',
+    enforceMissing: true,
+    enforceType: 'strict',
+    ...this.options.schemaOptions
+  };
   this.thinky = thinky(this.options.databaseOptions);
   this.options.thinky = this.thinky;
 
@@ -108,17 +114,20 @@ let AGCRUDRethink = function (options) {
       }
     });
 
-    let schemaOptions = modelSchema.schemaOptions || {};
-    let thinkySchemaOptions = {
-      enforce_extra: schemaOptions.enforceExtra || 'strict',
-      enforce_missing: schemaOptions.enforceMissing || true,
-      enforce_type: schemaOptions.enforceType || 'strict'
+    let schemaOptions = {
+      ...this.schemaOptions,
+      ...modelSchema.schemaOptions
+    };
+    let thinkyModelOptions = {
+      enforce_extra: schemaOptions.enforceExtra,
+      enforce_missing: schemaOptions.enforceMissing,
+      enforce_type: schemaOptions.enforceType
     };
     if (schemaOptions.table) {
-      thinkySchemaOptions.table = schemaOptions.table;
+      thinkyModelOptions.table = schemaOptions.table;
     }
 
-    let model = this.thinky.createModel(modelName, modelSchema.fields, thinkySchemaOptions);
+    let model = this.thinky.createModel(modelName, modelSchema.fields, thinkyModelOptions);
     this.models[modelName] = model;
     let indexes = modelSchema.indexes || [];
     indexes.forEach((indexData) => {
