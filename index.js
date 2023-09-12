@@ -110,9 +110,9 @@ let AGCRUDRethink = function (options) {
 
     let schemaOptions = modelSchema.schemaOptions || {};
     let thinkySchemaOptions = {
-      enforce_extra: schemaOptions.enforceExtra || 'strict',
-      enforce_missing: schemaOptions.enforceMissing || true,
-      enforce_type: schemaOptions.enforceType || 'strict'
+      enforce_extra: schemaOptions.enforceExtra || 'remove',
+      enforce_missing: schemaOptions.enforceMissing || false,
+      enforce_type: schemaOptions.enforceType || 'loose'
     };
     if (schemaOptions.table) {
       thinkySchemaOptions.table = schemaOptions.table;
