@@ -110,9 +110,9 @@ let AGCRUDRethink = function (options) {
 
     let schemaOptions = modelSchema.schemaOptions || {};
     let thinkySchemaOptions = {
-      enforce_extra: schemaOptions.enforceExtra || 'remove',
-      enforce_missing: schemaOptions.enforceMissing || false,
-      enforce_type: schemaOptions.enforceType || 'loose'
+      enforce_extra: schemaOptions.enforceExtra || 'strict',
+      enforce_missing: schemaOptions.enforceMissing || true,
+      enforce_type: schemaOptions.enforceType || 'strict'
     };
     if (schemaOptions.table) {
       thinkySchemaOptions.table = schemaOptions.table;
@@ -859,7 +859,7 @@ AGCRUDRethink.prototype._read = function (query, callback, socket) {
   } else {
     if (query.id) {
       let dataProvider = (cb) => {
-        ModelClass.get(query.id).run((err, data) => {
+        ModelClass.get(query.id).execute((err, data) => {
           let error;
           if (err) {
             this.emit('error', {error: err});
@@ -925,12 +925,12 @@ AGCRUDRethink.prototype._read = function (query, callback, socket) {
       if (query.offset) {
         tasks.push((cb) => {
           // Get one extra record just to check if we have the last value in the sequence.
-          rethinkQuery.slice(query.offset, query.offset + pageSize + 1).pluck('id').run(cb);
+          rethinkQuery.slice(query.offset, query.offset + pageSize + 1).pluck('id').execute(cb);
         });
       } else {
         tasks.push((cb) => {
           // Get one extra record just to check if we have the last value in the sequence.
-          rethinkQuery.limit(pageSize + 1).pluck('id').run(cb);
+          rethinkQuery.limit(pageSize + 1).pluck('id').execute(cb);
         });
       }
 
