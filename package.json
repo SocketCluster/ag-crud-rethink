@@ -1,7 +1,7 @@
 {
   "name": "ag-crud-rethink",
   "version": "3.0.5",
-  "description": "A realtime REST layer plugin for Asyngular using RethinkDB as the database",
+  "description": "A realtime REST layer plugin for SocketCluster using RethinkDB as the database",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -17,8 +17,8 @@
     "thinky": "^2.3.9"
   },
   "keywords": [
+    "socketcluster",
     "rethinkdb",
-    "asyngular",
     "realtime",
     "storage",
     "rest",
