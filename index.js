@@ -20,7 +20,7 @@ let AGCRUDRethink = function (options) {
   this.schema = this.options.schema;
   this.schemaOptions = {
     enforceExtra: 'strict',
-    enforceMissing: true,
+    enforceMissing: false,
     enforceType: 'strict',
     ...this.options.schemaOptions
   };
