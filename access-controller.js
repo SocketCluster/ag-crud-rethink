@@ -1,17 +1,22 @@
-const constructTransformedRethinkQuery = require('./query-transformer').constructTransformedRethinkQuery;
-const parseChannelResourceQuery = require('./channel-resource-parser').parseChannelResourceQuery;
+const {constructTransformedRethinkQuery} = require('./query-transformer');
+const {parseChannelResourceQuery} = require('./channel-resource-parser');
 const AsyncStreamEmitter = require('async-stream-emitter');
+const {validateQuery} = require('./validate');
 
 let AccessController = function (agServer, options) {
   AsyncStreamEmitter.call(this);
 
   this.options = options || {};
   this.schema = this.options.schema || {};
+  this.maxPageSize = this.options.maxPageSize || null;
   this.thinky = this.options.thinky;
   this.cache = this.options.cache;
   this.agServer = agServer;
 
   this._getModelAccessFilter = (modelType, accessPhase) => {
+    if (modelType == null || typeof modelType !== 'string') {
+      return null;
+    }
     let modelSchema = this.schema[modelType];
     if (!modelSchema) {
       return null;
@@ -21,6 +26,13 @@ let AccessController = function (agServer, options) {
       return null;
     }
     return modelAccessFilters[accessPhase] || null;
+  };
+
+  this._getComputedModelSchema = (type) => {
+    return {
+      maxPageSize: this.maxPageSize,
+      ...this.schema[type]
+    };
   };
 
   let middleware = this.options.middleware || {};
@@ -37,25 +49,52 @@ let AccessController = function (agServer, options) {
           continue;
         }
       }
+
       if (action.type === action.INVOKE) {
         if (action.procedure === 'create' || action.procedure === 'read' || action.procedure === 'update' || action.procedure === 'delete') {
+          let query = action.data;
+          try {
+            validateQuery(query, this.schema);
+          } catch (validationError) {
+            let error = new Error(
+              `Query failed validation because of error: ${validationError.message}`
+            );
+            error.name = 'CRUDBlockedError';
+            error.type = 'pre';
+            action.block(error);
+            continue;
+          }
+
+          if (action.procedure === 'read' && query.view && typeof query.pageSize === 'number') {
+            let {maxPageSize} = this._getComputedModelSchema(query.type);
+            if (maxPageSize != null && query.pageSize > maxPageSize) {
+              let error = new Error(
+                'You are not permitted to access the ' + query.view + ' view of the ' + query.type + ' model - Query pageSize exceeded the maxPageSize of ' + maxPageSize
+              );
+              error.name = 'CRUDBlockedError';
+              error.type = 'pre';
+              action.block(error);
+              continue;
+            }
+          }
+
           // If socket has a valid auth token, then allow emitting get or set events
           let authToken = action.socket.authToken;
 
-          let preAccessFilter = this._getModelAccessFilter(action.data.type, 'pre');
+          let preAccessFilter = this._getModelAccessFilter(query.type, 'pre');
           if (preAccessFilter) {
             let crudRequest = {
               r: this.thinky.r,
               socket: action.socket,
               action: action.procedure,
               authToken,
-              query: action.data
+              query
             };
             try {
               await preAccessFilter(crudRequest);
             } catch (error) {
               if (typeof error === 'boolean') {
-                error = new Error('You are not permitted to perform a CRUD operation on the ' + action.data.type + ' resource with ID ' + action.data.id);
+                error = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id);
                 error.name = 'CRUDBlockedError';
                 error.type = 'pre';
               }
@@ -66,7 +105,7 @@ let AccessController = function (agServer, options) {
             continue;
           }
           if (this.options.blockPreByDefault) {
-            let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + action.data.type + ' resource with ID ' + action.data.id + ' - No access filters found');
+            let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id + ' - No access filters found');
             crudBlockedError.name = 'CRUDBlockedError';
             crudBlockedError.type = 'pre';
             action.block(crudBlockedError);
@@ -99,11 +138,24 @@ let AccessController = function (agServer, options) {
           action.allow();
           continue;
         }
+
         // Sometimes the real viewParams may be different from what can be parsed from
         // the channel name; this is because some view params don't affect the real-time
         // delivery of messages but they may still be useful in constructing the view.
-        if (channelResourceQuery.view !== undefined && action.data && typeof action.data.viewParams === 'object') {
+        if (channelResourceQuery.view != null && action.data && action.data.viewParams && typeof action.data.viewParams === 'object') {
           channelResourceQuery.viewParams = action.data.viewParams;
+        }
+
+        try {
+          validateQuery(channelResourceQuery, this.schema);
+        } catch (validationError) {
+          let error = new Error(
+            `Subscribe query failed validation because of error: ${validationError.message}`
+          );
+          error.name = 'CRUDBlockedError';
+          error.type = 'pre';
+          action.block(error);
+          continue;
         }
 
         let continueWithPostAccessFilter = async () => {
@@ -178,7 +230,7 @@ AccessController.prototype.applyPostAccessFilter = async function (req) {
 };
 
 AccessController.prototype._applyPostAccessFilter = function (req, next) {
-  let query = req.query;
+  let {query} = req;
   let postAccessFilter = this._getModelAccessFilter(query.type, 'post');
 
   if (postAccessFilter) {
