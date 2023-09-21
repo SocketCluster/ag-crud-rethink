@@ -12,6 +12,7 @@ function validateQuery(query, schema) {
   if (!schema[query.type]) {
     throw new Error(`Invalid query - The query type ${query.type} was not defined on the schema`);
   }
+
   let fieldIsSet = query.field != null;
   let idIsSet = query.id != null;
   if (fieldIsSet) {
@@ -32,6 +33,15 @@ function validateQuery(query, schema) {
   let viewIsSet = query.view != null;
   if (viewIsSet) {
     validateViewQuery(query, schema);
+  }
+  if (query.offset != null && typeof query.offset !== 'number') {
+    throw new Error('Invalid view query - The offset property must be a number');
+  }
+  if (query.pageSize != null && typeof query.pageSize !== 'number') {
+    throw new Error('Invalid view query - The pageSize property must be a number');
+  }
+  if (query.getCount != null && typeof query.getCount !== 'boolean') {
+    throw new Error('Invalid view query - The getCount property must be a boolean');
   }
 }
 

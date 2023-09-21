@@ -711,7 +711,7 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       savedHandler(error);
-    } else if (typeof query.value === 'object') {
+    } else if (query.value && typeof query.value === 'object') {
       let instance = new ModelClass(query.value);
       instance.save(savedHandler);
     } else {
@@ -1086,7 +1086,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
           });
         }
       } else {
-        if (typeof query.value === 'object') {
+        if (query.value && typeof query.value === 'object') {
           tasks.push(loadModelInstanceAndGetViewData);
 
           tasks.push(async (cb) => {
@@ -1138,6 +1138,9 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
         this.emit('deleteFail', {query, error: err});
         reject(err);
       } else {
+        let resourceChannelName = this._getResourceChannelName(query);
+        this.publish(resourceChannelName);
+
         if (query.field) {
           this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
             type: 'delete'
@@ -1150,11 +1153,6 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
           } else {
             deletedFields = result;
           }
-          Object.keys(deletedFields || {}).forEach((field) => {
-            this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
-              type: 'delete'
-            });
-          });
 
           oldAffectedViewData.forEach((viewData) => {
             this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
@@ -1163,6 +1161,11 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
                 id: query.id,
                 ...viewData.affectingData
               }
+            });
+          });
+          Object.keys(deletedFields || {}).forEach((field) => {
+            this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
+              type: 'delete'
             });
           });
         }
