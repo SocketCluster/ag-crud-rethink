@@ -299,7 +299,6 @@ AccessController.prototype._applyPostAccessFilter = function (req, next) {
         }
         rethinkQuery.run(queryResponseHandler);
       }
-
     } else {
       continueWithPostAccessFilter();
     }

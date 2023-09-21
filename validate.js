@@ -61,12 +61,20 @@ function validateViewQuery(query, schema) {
   if (hasPrimaryKeys) {
     let missingFields = [];
     viewSchema.primaryKeys.forEach((field) => {
-      if (query.viewParams[field] === undefined) {
+      if (query.viewParams[field] == null) {
         missingFields.push(field);
       }
     });
     if (missingFields.length > 0) {
-      throw new Error(`Invalid view query - The view ${query.view} under the type ${query.type} requires additional fields to meet primaryKeys requirements. Missing: ${missingFields.join(', ')}`);
+      throw new Error(
+        `Invalid view query - The view ${
+          query.view
+        } under the type ${
+          query.type
+        } requires additional viewParams to meet primaryKeys requirements. The following fields were missing or null: ${
+          missingFields.join(', ')
+        }`
+      );
     }
   }
 }
