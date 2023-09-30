@@ -720,7 +720,7 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
       savedHandler(error);
     } else if (query.value && typeof query.value === 'object') {
       try {
-        modelVerifier(query.value);
+        query.value = modelVerifier(query.value);
       } catch (error) {
         savedHandler(error);
         return;
@@ -1129,10 +1129,10 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
               return;
             }
 
-            let queryValue = {[query.field]: query.value};
+            let queryValue;
 
             try {
-              modelVerifier(queryValue);
+              queryValue = modelVerifier({[query.field]: query.value});
             } catch (error) {
               cb(error);
               return;
@@ -1158,7 +1158,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
               return;
             }
             try {
-              modelVerifier(query.value);
+              query.value = modelVerifier(query.value);
             } catch (error) {
               cb(error);
               return;
