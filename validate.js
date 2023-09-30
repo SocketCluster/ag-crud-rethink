@@ -89,6 +89,122 @@ function validateRequiredViewParams(viewParams) {
   }
 }
 
+function createVerifier(modelName, modelSchemaFields, options) {
+  return (record) => {
+    // TODO 000
+  };
+}
+
+class TypeConstraint {
+  required() {
+
+  }
+
+  allowNull() {
+
+  }
+
+  validate(value) {
+
+  }
+}
+
+class StringTypeConstraint extends TypeConstraint {
+  default() {
+
+  }
+
+  min() {
+
+  }
+
+  max() {
+
+  }
+
+  length() {
+
+  }
+
+  alphanum() {
+
+  }
+
+  regex() {
+
+  }
+
+  regexFlags() {
+
+  }
+
+  email() {
+
+  }
+
+  lowercase() {
+
+  }
+
+  uppercase() {
+
+  }
+
+  enum() {
+
+  }
+
+  uuid() {
+
+  }
+
+  validate(value) {
+    super.validate(value);
+  }
+}
+
+class NumberTypeConstraint extends TypeConstraint {
+  default() {
+
+  }
+
+  min() {
+
+  }
+
+  max() {
+
+  }
+
+  integer() {
+
+  }
+
+  validate(value) {
+    super.validate(value);
+  }
+}
+
+class BooleanTypeConstraint extends TypeConstraint {
+  constructor() {
+    super();
+  }
+}
+
+let typeBuilder = {
+  string: () => {
+    return new StringTypeConstraint();
+  },
+  number: () => {
+    return new NumberTypeConstraint();
+  },
+  boolean: () => {
+    return new BooleanTypeConstraint();
+  }
+};
+
 module.exports = {
-  validateQuery
+  validateQuery,
+  createVerifier,
+  typeBuilder
 };

@@ -6,9 +6,8 @@ let getViewMetaData = function (options, type, viewName) {
   return Object.assign({}, viewSchema);
 };
 
-module.exports.constructTransformedRethinkQuery = function (options, ModelClass, type, viewName, viewParams) {
+module.exports.constructTransformedRethinkQuery = function (options, rethinkQuery, type, viewName, viewParams) {
   let viewMetaData = getViewMetaData(options, type, viewName);
-  let rethinkQuery = ModelClass;
 
   let sanitizedViewParams = {};
   if (typeof viewParams === 'object' && viewParams != null) {
@@ -20,7 +19,7 @@ module.exports.constructTransformedRethinkQuery = function (options, ModelClass,
 
   let transformFn = viewMetaData.transform;
   if (transformFn) {
-    rethinkQuery = transformFn(rethinkQuery, options.thinky.r, sanitizedViewParams);
+    rethinkQuery = transformFn(rethinkQuery, options.rethink, sanitizedViewParams);
   }
 
   return rethinkQuery;

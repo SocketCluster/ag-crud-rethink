@@ -14,7 +14,7 @@
     "async": "1.4.2",
     "async-stream-emitter": "^3.0.3",
     "json-stable-stringify": "1.0.1",
-    "thinky": "^2.3.9"
+    "rethinkdbdash": "^2.3.31"
   },
   "keywords": [
     "socketcluster",

@@ -1,11 +1,12 @@
-const thinky = require('thinky');
+const rethinkdbdash = require('rethinkdbdash');
 const async = require('async');
 const AccessController = require('./access-controller');
 const Cache = require('./cache');
 const AsyncStreamEmitter = require('async-stream-emitter');
 const jsonStableStringify = require('json-stable-stringify');
 const {constructTransformedRethinkQuery} = require('./query-transformer');
-const {validateQuery} = require('./validate');
+const {validateQuery, createVerifier, typeBuilder} = require('./validate');
+const errors = require('./errors');
 
 let AGCRUDRethink = function (options) {
   AsyncStreamEmitter.call(this);
@@ -16,16 +17,10 @@ let AGCRUDRethink = function (options) {
     this.options.schema = {};
   }
 
-  this.models = {};
+  this.verifiers = {};
   this.schema = this.options.schema;
-  this.schemaOptions = {
-    enforceExtra: 'strict',
-    enforceMissing: false,
-    enforceType: 'strict',
-    ...this.options.schemaOptions
-  };
-  this.thinky = thinky(this.options.databaseOptions);
-  this.options.thinky = this.thinky;
+  this.rethink = rethinkdbdash(this.options.databaseOptions);
+  this.options.rethink = this.rethink;
 
   this.channelPrefix = 'crud>';
 
@@ -114,43 +109,10 @@ let AGCRUDRethink = function (options) {
       }
     });
 
-    let schemaOptions = {
-      ...this.schemaOptions,
-      ...modelSchema.schemaOptions
-    };
-    let thinkyModelOptions = {
-      enforce_extra: schemaOptions.enforceExtra,
-      enforce_missing: schemaOptions.enforceMissing,
-      enforce_type: schemaOptions.enforceType
-    };
-    if (schemaOptions.table) {
-      thinkyModelOptions.table = schemaOptions.table;
-    }
-
-    let model = this.thinky.createModel(modelName, modelSchema.fields, thinkyModelOptions);
-    this.models[modelName] = model;
-    let indexes = modelSchema.indexes || [];
-    indexes.forEach((indexData) => {
-      if (typeof indexData === 'string') {
-        model.ensureIndex(indexData);
-      } else {
-        if (!indexData.name) {
-          throw new Error(
-            `One of the indexes for the ${
-              modelName
-            } model schema was invalid. Each index must either be a string or an object with a name property. If it is an object, it may also specify optional fn and options properties.`
-          );
-        }
-        if (indexData.type === 'compound') {
-          model.ensureIndex(indexData.name, indexData.fn(this.thinky.r));
-        } else {
-          model.ensureIndex(indexData.name, indexData.fn, indexData.options);
-        }
-      }
-    });
+    this.verifiers[modelName] = createVerifier(modelName, modelSchema.fields);
   });
 
-  this.options.models = this.models;
+  this.options.verifiers = this.verifiers;
 
   let cacheDisabled;
   if (this.options.agServer) {
@@ -213,6 +175,40 @@ let AGCRUDRethink = function (options) {
 };
 
 AGCRUDRethink.prototype = Object.create(AsyncStreamEmitter.prototype);
+
+AGCRUDRethink.prototype.init = async function () {
+  for (let modelName of Object.keys(this.schema)) {
+    let modelSchema = this.schema[modelName];
+    let indexes = modelSchema.indexes || [];
+    let activeIndexesSet = new Set(
+      await this.rethink.table(modelName).indexList().run()
+    );
+    await Promise.all(
+      indexes.map(async (indexData) => {
+        if (typeof indexData === 'string') {
+          if (!activeIndexesSet.has(indexData)) {
+            await this.rethink.table(modelName).indexCreate(indexData).run();
+          }
+        } else {
+          if (!indexData.name) {
+            throw new Error(
+              `One of the indexes for the ${
+                modelName
+              } model schema was invalid. Each index must either be a string or an object with a name property. If it is an object, it may also specify optional fn and options properties.`
+            );
+          }
+          if (!activeIndexesSet.has(indexData.name)) {
+            if (indexData.type === 'compound') {
+              await this.rethink.table(modelName).indexCreate(indexData.name, indexData.fn(this.rethink)).run();
+            } else {
+              await this.rethink.table(modelName).indexCreate(indexData.name, indexData.fn, indexData.options).run();
+            }
+          }
+        }
+      })
+    );
+  }
+};
 
 AGCRUDRethink.prototype._getResourceChannelName = function (resource) {
   return this.channelPrefix + resource.type + '/' + resource.id;
@@ -424,6 +420,17 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     }
   });
   return affectedViews;
+};
+
+AGCRUDRethink.prototype._updateDb = async function (type, id, record) {
+  let result = await this.rethink.table(type).get(id).update(record, {returnChanges: true}).run();
+  if (result.errors) {
+    throw errors.create(result.first_error);
+  }
+  if (!result.changes.length) {
+    return {};
+  }
+  return result.changes[0].new_val;
 };
 
 /*
@@ -677,7 +684,7 @@ AGCRUDRethink.prototype.create = async function (query, socket) {
 
 AGCRUDRethink.prototype._create = async function (query, socket) {
   return new Promise((resolve, reject) => {
-    let ModelClass = this.models[query.type];
+    let modelVerifier = this.verifiers[query.type];
 
     let savedHandler = (err, result) => {
       if (err) {
@@ -707,13 +714,28 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
       }
     };
 
-    if (ModelClass == null) {
+    if (modelVerifier == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       savedHandler(error);
     } else if (query.value && typeof query.value === 'object') {
-      let instance = new ModelClass(query.value);
-      instance.save(savedHandler);
+      try {
+        modelVerifier(query.value);
+      } catch (error) {
+        savedHandler(error);
+        return;
+      }
+      this.rethink.table(query.type)
+        .insert(query.value, {returnChanges: true})
+        .run()
+        .then((result) => {
+          if (result.errors) {
+            savedHandler(errors.create(result.first_error));
+            return;
+          }
+          savedHandler(null, result.changes[0].new_val);
+        })
+        .catch((err) => savedHandler(err));
     } else {
       let error = new Error('Cannot create a document from a primitive - Must be an object');
       error.name = 'CRUDInvalidParams';
@@ -770,7 +792,7 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
         applyPostAccessFilter = () => Promise.resolve();
       }
       let accessFilterRequest = {
-        r: this.thinky.r,
+        r: this.rethink,
         socket,
         action: 'read',
         authToken: socket && socket.authToken,
@@ -822,24 +844,21 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
       resolve(result);
     };
 
-    let ModelClass = this.models[query.type];
-    if (ModelClass == null) {
+    let modelVerifier = this.verifiers[query.type];
+    if (modelVerifier == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       loadedHandler(error);
     } else {
       if (query.id) {
         let dataProvider = (cb) => {
-          ModelClass.get(query.id).execute((err, data) => {
-            let error;
-            if (err) {
-              this.emit('error', {error: err});
-              error = new Error(`Failed to get resource with id ${query.id} from the database`);
-            } else {
-              error = null;
-            }
-            cb(error, data);
-          });
+          this.rethink.table(query.type)
+            .get(query.id)
+            .run()
+            .then((result) => {
+              cb(null, result);
+            })
+            .catch((err) => cb(err));
         };
         let resourceChannelName = this._getResourceChannelName(query);
 
@@ -889,25 +908,49 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
           }
         }
       } else {
-        let rethinkQuery = constructTransformedRethinkQuery(this.options, ModelClass, query.type, query.view, query.viewParams);
+        let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
 
         let tasks = [];
 
         if (query.offset) {
           tasks.push((cb) => {
             // Get one extra record just to check if we have the last value in the sequence.
-            rethinkQuery.slice(query.offset, query.offset + pageSize + 1).pluck('id').execute(cb);
+            rethinkQuery.slice(query.offset, query.offset + pageSize + 1).pluck('id').run()
+              .then((result) => {
+                if (result.errors) {
+                  cb(errors.create(result.first_error));
+                  return;
+                }
+                cb(null, result);
+              })
+              .catch((err) => cb(err));
           });
         } else {
           tasks.push((cb) => {
             // Get one extra record just to check if we have the last value in the sequence.
-            rethinkQuery.limit(pageSize + 1).pluck('id').execute(cb);
+            rethinkQuery.limit(pageSize + 1).pluck('id').run()
+              .then((result) => {
+                if (result.errors) {
+                  cb(errors.create(result.first_error));
+                  return;
+                }
+                cb(null, result);
+              })
+              .catch((err) => cb(err));
           });
         }
 
         if (query.getCount) {
           tasks.push((cb) => {
-            rethinkQuery.count().execute(cb);
+            rethinkQuery.count().run()
+              .then((result) => {
+                if (result.errors) {
+                  cb(errors.create(result.first_error));
+                  return;
+                }
+                cb(null, result);
+              })
+              .catch((err) => cb(err));
           });
         }
 
@@ -1027,8 +1070,8 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
       }
     };
 
-    let ModelClass = this.models[query.type];
-    if (ModelClass == null) {
+    let modelVerifier = this.verifiers[query.type];
+    if (modelVerifier == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       savedHandler(error);
@@ -1049,7 +1092,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
       }
 
       let accessFilterRequest = {
-        r: this.thinky.r,
+        r: this.rethink,
         socket,
         action: 'update',
         authToken: socket && socket.authToken,
@@ -1058,11 +1101,15 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
 
       let modelInstance;
       let loadModelInstanceAndGetViewData = (cb) => {
-        ModelClass.get(query.id).run().then((instance) => {
-          modelInstance = instance;
-          let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
-          cb(null, oldAffectedViewData);
-        }).error(cb);
+        this.rethink.table(query.type)
+          .get(query.id)
+          .run()
+          .then((result) => {
+            modelInstance = result;
+            let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
+            cb(null, oldAffectedViewData);
+          })
+          .catch((err) => cb(err));
       };
 
       if (query.field) {
@@ -1081,8 +1128,21 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
               cb(error);
               return;
             }
-            modelInstance[query.field] = query.value;
-            modelInstance.save(cb);
+
+            let queryValue = {[query.field]: query.value};
+
+            try {
+              modelVerifier(queryValue);
+            } catch (error) {
+              cb(error);
+              return;
+            }
+
+            this._updateDb(query.type, query.id, queryValue)
+              .then((result) => {
+                cb(null, result);
+              })
+              .catch((err) => cb(err));
           });
         }
       } else {
@@ -1097,11 +1157,17 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
               cb(error);
               return;
             }
-            let queryValue = query.value || {};
-            Object.keys(queryValue).forEach((field) => {
-              modelInstance[field] = queryValue[field];
-            });
-            modelInstance.save(cb);
+            try {
+              modelVerifier(query.value);
+            } catch (error) {
+              cb(error);
+              return;
+            }
+            this._updateDb(query.type, query.id, query.value)
+              .then((result) => {
+                cb(null, result);
+              })
+              .catch((err) => cb(err));
           });
         } else {
           let error = new Error('Cannot replace document with a primitive - Must be an object');
@@ -1174,8 +1240,8 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       }
     };
 
-    let ModelClass = this.models[query.type];
-    if (ModelClass == null) {
+    let modelVerifier = this.verifiers[query.type];
+    if (modelVerifier == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       deletedHandler(error);
@@ -1189,11 +1255,15 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       } else {
         let modelInstance;
         tasks.push((cb) => {
-          ModelClass.get(query.id).run().then((instance) => {
-            modelInstance = instance;
-            let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
-            cb(null, oldAffectedViewData);
-          }).error(cb);
+          this.rethink.table(query.type)
+            .get(query.id)
+            .run()
+            .then((result) => {
+              modelInstance = result;
+              let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
+              cb(null, oldAffectedViewData);
+            })
+            .catch((err) => cb(err));
         });
 
         // If socket does not exist, then the CRUD operation comes from the server-side
@@ -1206,7 +1276,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
         }
 
         let accessFilterRequest = {
-          r: this.thinky.r,
+          r: this.rethink,
           socket,
           action: 'delete',
           authToken: socket && socket.authToken,
@@ -1222,7 +1292,15 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
               cb(error);
               return;
             }
-            modelInstance.delete(cb);
+            this.rethink.table(query.type).get(query.id).delete().run()
+              .then((result) => {
+                if (result.errors) {
+                  cb(errors.create(result.first_error));
+                  return;
+                }
+                cb(null, result);
+              })
+              .catch((err) => cb(err));
           });
         } else {
           tasks.push(async (cb) => {
@@ -1233,8 +1311,19 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
               cb(error);
               return;
             }
-            delete modelInstance[query.field];
-            modelInstance.save(cb);
+            this.rethink.table(query.type).get(query.id)
+              .update((row) => {
+                return row.without(query.field);
+              }, {returnChanges: true})
+              .run()
+              .then((result) => {
+                if (result.errors) {
+                  cb(errors.create(result.first_error));
+                  return;
+                }
+                cb(null, result.changes.length ? result.changes[0].new_val : {});
+              })
+              .catch((err) => cb(err));
           });
         }
         if (tasks.length) {
@@ -1312,8 +1401,9 @@ AGCRUDRethink.prototype._validateQuery = function (query) {
   validateQuery(query, this.schema);
 };
 
-module.exports.thinky = thinky;
 module.exports.AGCRUDRethink = AGCRUDRethink;
+
+module.exports.type = typeBuilder;
 
 module.exports.attach = function (agServer, options) {
   if (options) {
