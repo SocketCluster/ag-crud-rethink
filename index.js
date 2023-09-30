@@ -177,7 +177,15 @@ let AGCRUDRethink = function (options) {
 AGCRUDRethink.prototype = Object.create(AsyncStreamEmitter.prototype);
 
 AGCRUDRethink.prototype.init = async function () {
+  let databases = await this.rethink.dbList().run();
+  if (!databases.includes(this.options.databaseOptions.db)) {
+    await this.rethink.dbCreate(this.options.databaseOptions.db).run();
+  }
+  let tables = await this.rethink.tableList().run();
   for (let modelName of Object.keys(this.schema)) {
+    if (!tables.includes(modelName)) {
+      await this.rethink.tableCreate(modelName).run();
+    }
     let modelSchema = this.schema[modelName];
     let indexes = modelSchema.indexes || [];
     let activeIndexesSet = new Set(
