@@ -9,7 +9,7 @@ let AccessController = function (agServer, options) {
   this.options = options || {};
   this.schema = this.options.schema || {};
   this.maxPageSize = this.options.maxPageSize || null;
-  this.thinky = this.options.thinky;
+  this.rethink = this.options.rethink;
   this.cache = this.options.cache;
   this.agServer = agServer;
 
@@ -84,7 +84,7 @@ let AccessController = function (agServer, options) {
           let preAccessFilter = this._getModelAccessFilter(query.type, 'pre');
           if (preAccessFilter) {
             let crudRequest = {
-              r: this.thinky.r,
+              r: this.rethink,
               socket: action.socket,
               action: action.procedure,
               authToken,
@@ -178,7 +178,7 @@ let AccessController = function (agServer, options) {
         let preAccessFilter = this._getModelAccessFilter(channelResourceQuery.type, 'pre');
         if (preAccessFilter) {
           let subscribePreRequest = {
-            r: this.thinky.r,
+            r: this.rethink,
             socket: action.socket,
             action: 'subscribe',
             authToken,
@@ -235,7 +235,7 @@ AccessController.prototype._applyPostAccessFilter = function (req, next) {
 
   if (postAccessFilter) {
     let request = {
-      r: this.thinky.r,
+      r: this.rethink,
       socket: req.socket,
       action: req.action,
       authToken: req.socket && req.socket.authToken,
@@ -265,9 +265,8 @@ AccessController.prototype._applyPostAccessFilter = function (req, next) {
 
     if (req.fetchResource) {
       let pageSize = query.pageSize || this.options.defaultPageSize;
-      let ModelClass = this.options.models[query.type];
 
-      if (!ModelClass) {
+      if (!this.schema[query.type]) {
         let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
         error.name = 'CRUDInvalidModelType';
         next(error);
@@ -286,12 +285,18 @@ AccessController.prototype._applyPostAccessFilter = function (req, next) {
 
       if (query.id) {
         let dataProvider = (cb) => {
-          ModelClass.get(query.id).run(cb);
+          this.rethink.table(query.type)
+            .get(query.id)
+            .run()
+            .then((result) => {
+              cb(null, result);
+            })
+            .catch((err) => cb(err));
         };
         this.cache.pass(query, dataProvider, queryResponseHandler);
       } else {
         // For collections.
-        let rethinkQuery = constructTransformedRethinkQuery(this.options, ModelClass, query.type, query.view, query.viewParams);
+        let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
         if (query.offset) {
           rethinkQuery = rethinkQuery.slice(query.offset, query.offset + pageSize);
         } else {

@@ -89,6 +89,442 @@ function validateRequiredViewParams(viewParams) {
   }
 }
 
+function validateRecordAgainstConstraint(modelName, field, value, constraint) {
+  if (
+    (!constraint.options.required && value === undefined) ||
+    (constraint.options.allowNull && value === null)
+  ) {
+    return value;
+  }
+  try {
+    return constraint.validate(value);
+  } catch (error) {
+    let crudValidationError = new Error(
+      `Invalid ${
+        field
+      }: ${
+        error.message
+      }`
+    );
+    crudValidationError.name = 'CRUDValidationError';
+    crudValidationError.model = modelName;
+    crudValidationError.field = field;
+    throw crudValidationError;
+  }
+}
+
+function createVerifier(modelName, modelSchemaFields) {
+  return (record, allowPartial) => {
+    let sanitizedRecord = {};
+    if (allowPartial) {
+      for (let [key, value] of Object.entries(record)) {
+        let constraint = modelSchemaFields[key];
+        if (constraint == null) {
+          continue;
+        }
+        sanitizedRecord[key] = validateRecordAgainstConstraint(modelName, key, value, constraint);
+      }
+      return sanitizedRecord;
+    }
+    for (let [key, constraint] of Object.entries(modelSchemaFields)) {
+      let value = record[key];
+      sanitizedRecord[key] = validateRecordAgainstConstraint(modelName, key, value, constraint);
+    }
+    return sanitizedRecord;
+  };
+}
+
+let genericValidators = {
+  default: (arg) => {
+    return (value) => {
+      if (value == null) {
+        return arg;
+      }
+      return value;
+    };
+  }
+};
+
+class TypeConstraint {
+  constructor(validators, options) {
+    this.validators = validators || {};
+    this.options = options || {};
+  }
+
+  validate(value) {
+    let sanitizedValue = value;
+    for (let validator of Object.values(this.validators)) {
+      sanitizedValue = validator(sanitizedValue);
+    }
+    return sanitizedValue;
+  }
+}
+
+const ALPHANUM_REGEX = /^[0-9a-zA-Z]*$/;
+const LOWERCASE_REGEX = /^[^A-Z]*$/;
+const UPPERCASE_REGEX = /^[^a-z]*$/;
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/i;
+
+const UUID_REGEXES = {
+  3: /^[0-9A-F]{8}-[0-9A-F]{4}-3[0-9A-F]{3}-[0-9A-F]{4}-[0-9A-F]{12}$/i,
+  4: /^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  5: /^[0-9A-F]{8}-[0-9A-F]{4}-5[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  all: /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i
+};
+
+let stringValidators = {
+  ...genericValidators,
+  string: (arg) => {
+    return (value) => {
+      if (typeof value !== 'string') {
+        throw new Error('Value must be a string');
+      }
+      return value;
+    };
+  },
+  min: (arg) => {
+    return (value) => {
+      if (value.length < arg) {
+        throw new Error(`Value must be at least ${arg} characters in length`);
+      }
+      return value;
+    };
+  },
+  max: (arg) => {
+    return (value) => {
+      if (value.length > arg) {
+        throw new Error(`Value cannot exceed ${arg} characters in length`);
+      }
+      return value;
+    };
+  },
+  length: (arg) => {
+    return (value) => {
+      if (value.length !== arg) {
+        throw new Error(`Value must be ${arg} characters long`);
+      }
+      return value;
+    };
+  },
+  alphanum: (arg) => {
+    return (value) => {
+      if (!value.match(ALPHANUM_REGEX)) {
+        throw new Error('Value must be alphanumeric');
+      }
+      return value;
+    };
+  },
+  regex: (arg) => {
+    let regex = new RegExp(arg[0], arg[1]);
+    return (value) => {
+      if (!value.match(regex)) {
+        throw new Error('Value must adhere to the required regular expression format');
+      }
+      return value;
+    };
+  },
+  email: (arg) => {
+    return (value) => {
+      if (!value.match(EMAIL_REGEX)) {
+        throw new Error('Value must be an email address');
+      }
+      return value;
+    };
+  },
+  lowercase: (arg) => {
+    return (value) => {
+      if (!value.match(LOWERCASE_REGEX)) {
+        throw new Error('Value must be in lowercase');
+      }
+      return value;
+    };
+  },
+  uppercase: (arg) => {
+    return (value) => {
+      if (!value.match(UPPERCASE_REGEX)) {
+        throw new Error('Value must be in uppercase');
+      }
+      return value;
+    };
+  },
+  enum: (arg) => {
+    return (value) => {
+      if (!arg.includes(value)) {
+        throw new Error(`Value must be one of the following: ${arg.join(', ')}`);
+      }
+      return value;
+    };
+  },
+  uuid: (arg) => {
+    return (value) => {
+      let regex = UUID_REGEXES[arg || 'all'];
+      if (!value.match(regex)) {
+        throw new Error(
+          `Value must be a UUID${
+            arg ? ` (v${arg})` : ''
+          }`
+        );
+      }
+      return value;
+    };
+  }
+};
+
+class StringTypeConstraint extends TypeConstraint {
+  createSubConstraint(constraintName, arg, options) {
+    let newValidators = {};
+    if (constraintName != null) {
+      newValidators[constraintName] = stringValidators[constraintName](arg);
+    }
+    return new StringTypeConstraint(
+      {
+        ...this.validators,
+        ...newValidators
+      },
+      {
+        ...this.options,
+        ...options
+      }
+    );
+  }
+
+  required() {
+    return this.createSubConstraint(
+      null,
+      {
+        ...this.options,
+        required: true
+      },
+      { required: true }
+    );
+  }
+
+  allowNull() {
+    return this.createSubConstraint(
+      null,
+      {
+        ...this.options,
+        allowNull: true
+      },
+      { allowNull: true }
+    );
+  }
+
+  default(arg) {
+    return this.createSubConstraint('default', arg);
+  }
+
+  min(arg) {
+    return this.createSubConstraint('min', arg);
+  }
+
+  max(arg) {
+    return this.createSubConstraint('max', arg);
+  }
+
+  length(arg) {
+    return this.createSubConstraint('length', arg);
+  }
+
+  alphanum() {
+    return this.createSubConstraint('alphanum');
+  }
+
+  regex(arg) {
+    return this.createSubConstraint('regex', arg);
+  }
+
+  email() {
+    return this.createSubConstraint('email');
+  }
+
+  lowercase() {
+    return this.createSubConstraint('lowercase');
+  }
+
+  uppercase() {
+    return this.createSubConstraint('uppercase');
+  }
+
+  enum(arg) {
+    return this.createSubConstraint('enum', arg);
+  }
+
+  uuid(arg) {
+    return this.createSubConstraint('uuid', arg);
+  }
+}
+
+let numberValidators = {
+  ...genericValidators,
+  number: (arg) => {
+    return (value) => {
+      if (typeof value !== 'number') {
+        throw new Error('Value must be a number');
+      }
+      return value;
+    };
+  },
+  min: (arg) => {
+    return (value) => {
+      if (value < arg) {
+        throw new Error(`Value must be less than ${arg}`);
+      }
+      return value;
+    };
+  },
+  max: (arg) => {
+    return (value) => {
+      if (value > arg) {
+        throw new Error(`Value cannot be greater than ${arg}`);
+      }
+      return value;
+    };
+  },
+  integer: (arg) => {
+    return (value) => {
+      if (!Number.isInteger(value)) {
+        throw new Error('Value must be an integer');
+      }
+      return value;
+    };
+  }
+};
+
+class NumberTypeConstraint extends TypeConstraint {
+  createSubConstraint(constraintName, arg, options) {
+    let newValidators = {};
+    if (constraintName != null) {
+      newValidators[constraintName] = numberValidators[constraintName](arg);
+    }
+    return new NumberTypeConstraint(
+      {
+        ...this.validators,
+        ...newValidators
+      },
+      {
+        ...this.options,
+        ...options
+      }
+    );
+  }
+
+  required() {
+    return this.createSubConstraint(
+      null,
+      {
+        ...this.options,
+        required: true
+      },
+      { required: true }
+    );
+  }
+
+  allowNull() {
+    return this.createSubConstraint(
+      null,
+      {
+        ...this.options,
+        allowNull: true
+      },
+      { allowNull: true }
+    );
+  }
+
+  default(arg) {
+    return this.createSubConstraint('default', arg);
+  }
+
+  min(arg) {
+    return this.createSubConstraint('min', arg);
+  }
+
+  max(arg) {
+    return this.createSubConstraint('max', arg);
+  }
+
+  integer() {
+    return this.createSubConstraint('integer');
+  }
+}
+
+let booleanValidators = {
+  ...genericValidators,
+  boolean: (arg) => {
+    return (value) => {
+      if (typeof value !== 'boolean') {
+        throw new Error('Value must be a boolean');
+      }
+      return value;
+    };
+  }
+};
+
+class BooleanTypeConstraint extends TypeConstraint {
+  createSubConstraint(constraintName, arg, options) {
+    let newValidators = {};
+    if (constraintName != null) {
+      newValidators[constraintName] = booleanValidators[constraintName](arg);
+    }
+    return new BooleanTypeConstraint(
+      {
+        ...this.validators,
+        ...newValidators
+      },
+      {
+        ...this.options,
+        ...options
+      }
+    );
+  }
+
+  required() {
+    return this.createSubConstraint(
+      null,
+      {
+        ...this.options,
+        required: true
+      },
+      { required: true }
+    );
+  }
+
+  allowNull() {
+    return this.createSubConstraint(
+      null,
+      {
+        ...this.options,
+        allowNull: true
+      },
+      { allowNull: true }
+    );
+  }
+
+  default(arg) {
+    return this.createSubConstraint('default', arg);
+  }
+}
+
+let typeBuilder = {
+  string: () => {
+    return new StringTypeConstraint({
+      string: stringValidators.string()
+    });
+  },
+  number: () => {
+    return new NumberTypeConstraint({
+      number: numberValidators.number()
+    });
+  },
+  boolean: () => {
+    return new BooleanTypeConstraint({
+      boolean: booleanValidators.boolean()
+    });
+  }
+};
+
 module.exports = {
-  validateQuery
+  validateQuery,
+  createVerifier,
+  typeBuilder
 };
