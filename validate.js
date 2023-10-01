@@ -89,14 +89,21 @@ function validateRequiredViewParams(viewParams) {
   }
 }
 
+function getUnknownFieldErrorMessage(modelName) {
+  return `The field was not part of the ${modelName} model schema`;
+}
+
 function validateRecordAgainstConstraint(modelName, field, value, constraint) {
-  if (
-    (!constraint.options.required && value === undefined) ||
-    (constraint.options.allowNull && value === null)
-  ) {
-    return value;
-  }
   try {
+    if (constraint == null) {
+      throw new Error(getUnknownFieldErrorMessage(modelName));
+    }
+    if (
+      (!constraint.options.required && value === undefined) ||
+      (constraint.options.allowNull && value === null)
+    ) {
+      return value;
+    }
     return constraint.validate(value);
   } catch (error) {
     let crudValidationError = new Error(
@@ -117,18 +124,39 @@ function createVerifier(modelName, modelSchemaFields) {
   return (record, allowPartial) => {
     let sanitizedRecord = {};
     if (allowPartial) {
-      for (let [key, value] of Object.entries(record)) {
-        let constraint = modelSchemaFields[key];
-        if (constraint == null) {
-          continue;
-        }
-        sanitizedRecord[key] = validateRecordAgainstConstraint(modelName, key, value, constraint);
+      for (let [field, value] of Object.entries(record)) {
+        sanitizedRecord[field] = validateRecordAgainstConstraint(
+          modelName,
+          field,
+          value,
+          modelSchemaFields[field]
+        );
       }
       return sanitizedRecord;
     }
-    for (let [key, constraint] of Object.entries(modelSchemaFields)) {
-      let value = record[key];
-      sanitizedRecord[key] = validateRecordAgainstConstraint(modelName, key, value, constraint);
+    for (let [field, constraint] of Object.entries(modelSchemaFields)) {
+      let value = record[field];
+      sanitizedRecord[field] = validateRecordAgainstConstraint(
+        modelName,
+        field,
+        value,
+        constraint
+      );
+    }
+    for (let field of Object.keys(record)) {
+      if (modelSchemaFields[field] == null) {
+        let crudValidationError = new Error(
+          `Invalid ${
+            field
+          }: ${
+            getUnknownFieldErrorMessage(modelName)
+          }`
+        );
+        crudValidationError.name = 'CRUDValidationError';
+        crudValidationError.model = modelName;
+        crudValidationError.field = field;
+        throw crudValidationError;
+      }
     }
     return sanitizedRecord;
   };
