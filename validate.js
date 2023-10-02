@@ -93,70 +93,57 @@ function getUnknownFieldErrorMessage(modelName) {
   return `The field was not part of the ${modelName} model schema`;
 }
 
-function validateRecordAgainstConstraint(modelName, field, value, constraint) {
+function throwFieldValidationError(modelName, field, errorMessage) {
+  let crudValidationError = new Error(
+    `Invalid ${
+      field
+    }: ${
+      errorMessage
+    }`
+  );
+  crudValidationError.name = 'CRUDValidationError';
+  crudValidationError.model = modelName;
+  crudValidationError.field = field;
+  throw crudValidationError;
+}
+
+function validateValue(modelName, field, value, constraint) {
   try {
-    if (constraint == null) {
-      throw new Error(getUnknownFieldErrorMessage(modelName));
-    }
-    if (
-      (!constraint.options.required && value === undefined) ||
-      (constraint.options.allowNull && value === null)
-    ) {
-      return value;
-    }
     return constraint.validate(value);
   } catch (error) {
-    let crudValidationError = new Error(
-      `Invalid ${
-        field
-      }: ${
-        error.message
-      }`
-    );
-    crudValidationError.name = 'CRUDValidationError';
-    crudValidationError.model = modelName;
-    crudValidationError.field = field;
-    throw crudValidationError;
+    throwFieldValidationError(modelName, field, error.message);
   }
 }
 
-function createVerifier(modelName, modelSchemaFields) {
+function createModelValidator(modelName, modelSchemaFields) {
   return (record, allowPartial) => {
     let sanitizedRecord = {};
     if (allowPartial) {
       for (let [field, value] of Object.entries(record)) {
-        sanitizedRecord[field] = validateRecordAgainstConstraint(
-          modelName,
-          field,
-          value,
-          modelSchemaFields[field]
-        );
+        let constraint = modelSchemaFields[field];
+        if (constraint == null) {
+          throwFieldValidationError(
+            modelName,
+            field,
+            getUnknownFieldErrorMessage(modelName)
+          );
+        }
+        sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
       }
       return sanitizedRecord;
     }
-    for (let [field, constraint] of Object.entries(modelSchemaFields)) {
-      let value = record[field];
-      sanitizedRecord[field] = validateRecordAgainstConstraint(
-        modelName,
-        field,
-        value,
-        constraint
-      );
-    }
     for (let field of Object.keys(record)) {
       if (modelSchemaFields[field] == null) {
-        let crudValidationError = new Error(
-          `Invalid ${
-            field
-          }: ${
-            getUnknownFieldErrorMessage(modelName)
-          }`
+        throwFieldValidationError(
+          modelName,
+          field,
+          getUnknownFieldErrorMessage(modelName)
         );
-        crudValidationError.name = 'CRUDValidationError';
-        crudValidationError.model = modelName;
-        crudValidationError.field = field;
-        throw crudValidationError;
       }
+    }
+    for (let [field, constraint] of Object.entries(modelSchemaFields)) {
+      let value = record[field];
+      sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
     }
     return sanitizedRecord;
   };
@@ -179,12 +166,67 @@ class TypeConstraint {
     this.options = options || {};
   }
 
+  required() {
+    return this.createSubConstraintWithValidators(
+      null,
+      { required: true }
+    );
+  }
+
+  allowNull() {
+    return this.createSubConstraintWithValidators(
+      null,
+      { allowNull: true }
+    );
+  }
+
+  default(arg) {
+    let defaultFn = genericValidators.default(arg);
+    defaultFn.arg = arg;
+    return this.createSubConstraintWithValidators({
+      default: defaultFn
+    });
+  }
+
+  validator(fn) {
+    return this.createSubConstraintWithValidators({
+      validator: fn
+    });
+  }
+
   validate(value) {
     let sanitizedValue = value;
+    if (
+      (!this.options.required && sanitizedValue === undefined) ||
+      (this.options.allowNull && sanitizedValue === null)
+    ) {
+      return sanitizedValue;
+    }
     for (let validator of Object.values(this.validators)) {
       sanitizedValue = validator(sanitizedValue);
     }
     return sanitizedValue;
+  }
+
+  toString() {
+    let validatorInfo = {...this.validators};
+    if (this.options.allowNull) {
+      validatorInfo.allowNull = {};
+    }
+    if (this.options.required) {
+      validatorInfo.required = {};
+    }
+    return `[constraint ${
+      Object.entries(validatorInfo).map(
+        ([key, validatorFn]) => {
+          return `${
+            key
+          }${
+            validatorFn.arg === undefined ? '' : `(${validatorFn.arg})`
+          }`;
+        }
+      ).join(', ')
+    }]`;
   }
 }
 
@@ -299,11 +341,7 @@ let stringValidators = {
 };
 
 class StringTypeConstraint extends TypeConstraint {
-  createSubConstraint(constraintName, arg, options) {
-    let newValidators = {};
-    if (constraintName != null) {
-      newValidators[constraintName] = stringValidators[constraintName](arg);
-    }
+  createSubConstraintWithValidators(newValidators, options) {
     return new StringTypeConstraint(
       {
         ...this.validators,
@@ -316,30 +354,14 @@ class StringTypeConstraint extends TypeConstraint {
     );
   }
 
-  required() {
-    return this.createSubConstraint(
-      null,
-      {
-        ...this.options,
-        required: true
-      },
-      { required: true }
-    );
-  }
-
-  allowNull() {
-    return this.createSubConstraint(
-      null,
-      {
-        ...this.options,
-        allowNull: true
-      },
-      { allowNull: true }
-    );
-  }
-
-  default(arg) {
-    return this.createSubConstraint('default', arg);
+  createSubConstraint(constraintName, arg, options) {
+    let newValidators = {};
+    if (constraintName != null) {
+      let validatorFn = stringValidators[constraintName](arg);
+      validatorFn.arg = arg;
+      newValidators[constraintName] = validatorFn;
+    }
+    return this.createSubConstraintWithValidators(newValidators, options);
   }
 
   min(arg) {
@@ -420,11 +442,7 @@ let numberValidators = {
 };
 
 class NumberTypeConstraint extends TypeConstraint {
-  createSubConstraint(constraintName, arg, options) {
-    let newValidators = {};
-    if (constraintName != null) {
-      newValidators[constraintName] = numberValidators[constraintName](arg);
-    }
+  createSubConstraintWithValidators(newValidators, options) {
     return new NumberTypeConstraint(
       {
         ...this.validators,
@@ -437,30 +455,14 @@ class NumberTypeConstraint extends TypeConstraint {
     );
   }
 
-  required() {
-    return this.createSubConstraint(
-      null,
-      {
-        ...this.options,
-        required: true
-      },
-      { required: true }
-    );
-  }
-
-  allowNull() {
-    return this.createSubConstraint(
-      null,
-      {
-        ...this.options,
-        allowNull: true
-      },
-      { allowNull: true }
-    );
-  }
-
-  default(arg) {
-    return this.createSubConstraint('default', arg);
+  createSubConstraint(constraintName, arg, options) {
+    let newValidators = {};
+    if (constraintName != null) {
+      let validatorFn = numberValidators[constraintName](arg);
+      validatorFn.arg = arg;
+      newValidators[constraintName] = validatorFn;
+    }
+    return this.createSubConstraintWithValidators(newValidators, options);
   }
 
   min(arg) {
@@ -489,11 +491,7 @@ let booleanValidators = {
 };
 
 class BooleanTypeConstraint extends TypeConstraint {
-  createSubConstraint(constraintName, arg, options) {
-    let newValidators = {};
-    if (constraintName != null) {
-      newValidators[constraintName] = booleanValidators[constraintName](arg);
-    }
+  createSubConstraintWithValidators(newValidators, options) {
     return new BooleanTypeConstraint(
       {
         ...this.validators,
@@ -505,31 +503,20 @@ class BooleanTypeConstraint extends TypeConstraint {
       }
     );
   }
+}
 
-  required() {
-    return this.createSubConstraint(
-      null,
+class AnyTypeConstraint extends TypeConstraint {
+  createSubConstraintWithValidators(newValidators, options) {
+    return new AnyTypeConstraint(
+      {
+        ...this.validators,
+        ...newValidators
+      },
       {
         ...this.options,
-        required: true
-      },
-      { required: true }
+        ...options
+      }
     );
-  }
-
-  allowNull() {
-    return this.createSubConstraint(
-      null,
-      {
-        ...this.options,
-        allowNull: true
-      },
-      { allowNull: true }
-    );
-  }
-
-  default(arg) {
-    return this.createSubConstraint('default', arg);
   }
 }
 
@@ -548,11 +535,14 @@ let typeBuilder = {
     return new BooleanTypeConstraint({
       boolean: booleanValidators.boolean()
     });
+  },
+  any: () => {
+    return new AnyTypeConstraint();
   }
 };
 
 module.exports = {
   validateQuery,
-  createVerifier,
+  createModelValidator,
   typeBuilder
 };

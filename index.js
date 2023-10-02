@@ -5,7 +5,7 @@ const Cache = require('./cache');
 const AsyncStreamEmitter = require('async-stream-emitter');
 const jsonStableStringify = require('json-stable-stringify');
 const {constructTransformedRethinkQuery} = require('./query-transformer');
-const {validateQuery, createVerifier, typeBuilder} = require('./validate');
+const {validateQuery, createModelValidator, typeBuilder} = require('./validate');
 const errors = require('./errors');
 
 let AGCRUDRethink = function (options) {
@@ -17,7 +17,7 @@ let AGCRUDRethink = function (options) {
     this.options.schema = {};
   }
 
-  this.verifiers = {};
+  this.modelValidators = {};
   this.schema = this.options.schema;
   this.rethink = rethinkdbdash(this.options.databaseOptions);
   this.options.rethink = this.rethink;
@@ -109,10 +109,10 @@ let AGCRUDRethink = function (options) {
       }
     });
 
-    this.verifiers[modelName] = createVerifier(modelName, modelSchema.fields);
+    this.modelValidators[modelName] = createModelValidator(modelName, modelSchema.fields);
   });
 
-  this.options.verifiers = this.verifiers;
+  this.options.modelValidators = this.modelValidators;
 
   let cacheDisabled;
   if (this.options.agServer) {
@@ -692,7 +692,7 @@ AGCRUDRethink.prototype.create = async function (query, socket) {
 
 AGCRUDRethink.prototype._create = async function (query, socket) {
   return new Promise((resolve, reject) => {
-    let modelVerifier = this.verifiers[query.type];
+    let modelValidator = this.modelValidators[query.type];
 
     let savedHandler = (err, result) => {
       if (err) {
@@ -722,13 +722,13 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
       }
     };
 
-    if (modelVerifier == null) {
+    if (modelValidator == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       savedHandler(error);
     } else if (query.value && typeof query.value === 'object') {
       try {
-        query.value = modelVerifier(query.value);
+        query.value = modelValidator(query.value);
       } catch (error) {
         savedHandler(error);
         return;
@@ -852,8 +852,8 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
       resolve(result);
     };
 
-    let modelVerifier = this.verifiers[query.type];
-    if (modelVerifier == null) {
+    let modelValidator = this.modelValidators[query.type];
+    if (modelValidator == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       loadedHandler(error);
@@ -1078,8 +1078,8 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
       }
     };
 
-    let modelVerifier = this.verifiers[query.type];
-    if (modelVerifier == null) {
+    let modelValidator = this.modelValidators[query.type];
+    if (modelValidator == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       savedHandler(error);
@@ -1140,7 +1140,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
             let queryValue;
 
             try {
-              queryValue = modelVerifier({[query.field]: query.value}, true);
+              queryValue = modelValidator({[query.field]: query.value}, true);
             } catch (error) {
               cb(error);
               return;
@@ -1166,7 +1166,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
               return;
             }
             try {
-              query.value = modelVerifier(query.value, true);
+              query.value = modelValidator(query.value, true);
             } catch (error) {
               cb(error);
               return;
@@ -1248,8 +1248,8 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       }
     };
 
-    let modelVerifier = this.verifiers[query.type];
-    if (modelVerifier == null) {
+    let modelValidator = this.modelValidators[query.type];
+    if (modelValidator == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
       deletedHandler(error);
@@ -1415,6 +1415,8 @@ AGCRUDRethink.prototype._validateQuery = function (query) {
 module.exports.AGCRUDRethink = AGCRUDRethink;
 
 module.exports.type = typeBuilder;
+
+module.exports.createModelValidator = createModelValidator;
 
 module.exports.attach = function (agServer, options) {
   if (options) {
