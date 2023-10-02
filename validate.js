@@ -255,7 +255,7 @@ let stringValidators = {
   min: (arg) => {
     return (value) => {
       if (value.length < arg) {
-        throw new Error(`Value must be at least ${arg} characters in length`);
+        throw new Error(`Value must be at least ${arg} character${arg === 1 ? '' : 's'} in length`);
       }
       return value;
     };
@@ -263,7 +263,7 @@ let stringValidators = {
   max: (arg) => {
     return (value) => {
       if (value.length > arg) {
-        throw new Error(`Value cannot exceed ${arg} characters in length`);
+        throw new Error(`Value cannot exceed ${arg} character${arg === 1 ? '' : 's'} in length`);
       }
       return value;
     };
@@ -271,7 +271,7 @@ let stringValidators = {
   length: (arg) => {
     return (value) => {
       if (value.length !== arg) {
-        throw new Error(`Value must be ${arg} characters long`);
+        throw new Error(`Value must be ${arg} character${arg === 1 ? '' : 's'} long`);
       }
       return value;
     };
