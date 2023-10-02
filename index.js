@@ -1319,6 +1319,12 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
               cb(error);
               return;
             }
+            try {
+              modelValidator({[query.field]: undefined}, true);
+            } catch (error) {
+              cb(error);
+              return;
+            }
             this.rethink.table(query.type).get(query.id)
               .replace(
                 (row) => {
