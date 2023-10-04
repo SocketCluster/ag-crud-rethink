@@ -418,7 +418,7 @@ let numberValidators = {
   min: (arg) => {
     return (value) => {
       if (value < arg) {
-        throw new Error(`Value must be less than ${arg}`);
+        throw new Error(`Value must be at least ${arg}`);
       }
       return value;
     };
@@ -426,7 +426,7 @@ let numberValidators = {
   max: (arg) => {
     return (value) => {
       if (value > arg) {
-        throw new Error(`Value cannot be greater than ${arg}`);
+        throw new Error(`Value cannot exceed ${arg}`);
       }
       return value;
     };
