@@ -149,17 +149,6 @@ function createModelValidator(modelName, modelSchemaFields) {
   };
 }
 
-let genericValidators = {
-  default: (arg) => {
-    return (value) => {
-      if (value == null) {
-        return arg;
-      }
-      return value;
-    };
-  }
-};
-
 class TypeConstraint {
   constructor(validators, options) {
     this.validators = validators || {};
@@ -181,11 +170,10 @@ class TypeConstraint {
   }
 
   default(arg) {
-    let defaultFn = genericValidators.default(arg);
-    defaultFn.arg = arg;
-    return this.createSubConstraintWithValidators({
-      default: defaultFn
-    });
+    return this.createSubConstraintWithValidators(
+      null,
+      { default: arg }
+    );
   }
 
   validator(fn) {
@@ -195,10 +183,10 @@ class TypeConstraint {
   }
 
   validate(value) {
-    let sanitizedValue = value;
+    let sanitizedValue = value === undefined ? this.options.default : value;
     if (
-      (!this.options.required && sanitizedValue === undefined) ||
-      (this.options.allowNull && sanitizedValue === null)
+      (this.options.allowNull && sanitizedValue === null) ||
+      (!this.options.required && sanitizedValue === undefined)
     ) {
       return sanitizedValue;
     }
@@ -222,7 +210,7 @@ class TypeConstraint {
           return `${
             key
           }${
-            validatorFn.arg === undefined ? '' : `(${validatorFn.arg})`
+            Array.isArray(validatorFn.args) && validatorFn.args.length ? `(${validatorFn.args})` : ''
           }`;
         }
       ).join(', ')
@@ -243,7 +231,6 @@ const UUID_REGEXES = {
 };
 
 let stringValidators = {
-  ...genericValidators,
   string: (arg) => {
     return (value) => {
       if (typeof value !== 'string') {
@@ -284,8 +271,8 @@ let stringValidators = {
       return value;
     };
   },
-  regex: (arg) => {
-    let regex = new RegExp(arg[0], arg[1]);
+  regex: (argA, argB) => {
+    let regex = new RegExp(argA, argB);
     return (value) => {
       if (!value.match(regex)) {
         throw new Error('Value must adhere to the required regular expression format');
@@ -354,59 +341,58 @@ class StringTypeConstraint extends TypeConstraint {
     );
   }
 
-  createSubConstraint(constraintName, arg, options) {
+  createSubConstraint(constraintName, args, options) {
     let newValidators = {};
     if (constraintName != null) {
-      let validatorFn = stringValidators[constraintName](arg);
-      validatorFn.arg = arg;
+      let validatorFn = stringValidators[constraintName](...args);
+      validatorFn.args = args;
       newValidators[constraintName] = validatorFn;
     }
     return this.createSubConstraintWithValidators(newValidators, options);
   }
 
-  min(arg) {
-    return this.createSubConstraint('min', arg);
+  min(...args) {
+    return this.createSubConstraint('min', args);
   }
 
-  max(arg) {
-    return this.createSubConstraint('max', arg);
+  max(...args) {
+    return this.createSubConstraint('max', args);
   }
 
-  length(arg) {
-    return this.createSubConstraint('length', arg);
+  length(...args) {
+    return this.createSubConstraint('length', args);
   }
 
   alphanum() {
-    return this.createSubConstraint('alphanum');
+    return this.createSubConstraint('alphanum', []);
   }
 
-  regex(arg) {
-    return this.createSubConstraint('regex', arg);
+  regex(...args) {
+    return this.createSubConstraint('regex', args);
   }
 
   email() {
-    return this.createSubConstraint('email');
+    return this.createSubConstraint('email', []);
   }
 
   lowercase() {
-    return this.createSubConstraint('lowercase');
+    return this.createSubConstraint('lowercase', []);
   }
 
   uppercase() {
-    return this.createSubConstraint('uppercase');
+    return this.createSubConstraint('uppercase', []);
   }
 
-  enum(arg) {
-    return this.createSubConstraint('enum', arg);
+  enum(...args) {
+    return this.createSubConstraint('enum', args);
   }
 
-  uuid(arg) {
-    return this.createSubConstraint('uuid', arg);
+  uuid(...args) {
+    return this.createSubConstraint('uuid', args);
   }
 }
 
 let numberValidators = {
-  ...genericValidators,
   number: (arg) => {
     return (value) => {
       if (typeof value !== 'number') {
@@ -455,31 +441,30 @@ class NumberTypeConstraint extends TypeConstraint {
     );
   }
 
-  createSubConstraint(constraintName, arg, options) {
+  createSubConstraint(constraintName, args, options) {
     let newValidators = {};
     if (constraintName != null) {
-      let validatorFn = numberValidators[constraintName](arg);
-      validatorFn.arg = arg;
+      let validatorFn = numberValidators[constraintName](...args);
+      validatorFn.args = args;
       newValidators[constraintName] = validatorFn;
     }
     return this.createSubConstraintWithValidators(newValidators, options);
   }
 
-  min(arg) {
-    return this.createSubConstraint('min', arg);
+  min(...args) {
+    return this.createSubConstraint('min', args);
   }
 
-  max(arg) {
-    return this.createSubConstraint('max', arg);
+  max(...args) {
+    return this.createSubConstraint('max', args);
   }
 
   integer() {
-    return this.createSubConstraint('integer');
+    return this.createSubConstraint('integer', []);
   }
 }
 
 let booleanValidators = {
-  ...genericValidators,
   boolean: (arg) => {
     return (value) => {
       if (typeof value !== 'boolean') {
