@@ -169,13 +169,6 @@ class TypeConstraint {
     );
   }
 
-  default(arg) {
-    return this.createSubConstraintWithValidators(
-      null,
-      { default: arg }
-    );
-  }
-
   validator(fn) {
     return this.createSubConstraintWithValidators({
       validator: fn
@@ -183,17 +176,16 @@ class TypeConstraint {
   }
 
   validate(value) {
-    let sanitizedValue = value === undefined ? this.options.default : value;
     if (
-      (this.options.allowNull && sanitizedValue === null) ||
-      (!this.options.required && sanitizedValue === undefined)
+      (this.options.allowNull && value === null) ||
+      (!this.options.required && value === undefined)
     ) {
-      return sanitizedValue;
+      return value;
     }
     for (let validator of Object.values(this.validators)) {
-      sanitizedValue = validator(sanitizedValue);
+      value = validator(value);
     }
-    return sanitizedValue;
+    return value;
   }
 
   toString() {
