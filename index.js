@@ -283,10 +283,10 @@ AGCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, ty
   let primaryParams;
   let viewSchema = this._getView(type, viewName);
 
-  if (viewSchema && viewSchema.primaryKeys) {
+  if (viewSchema && viewSchema.primaryFields) {
     primaryParams = {};
 
-    viewSchema.primaryKeys.forEach((field) => {
+    viewSchema.primaryFields.forEach((field) => {
       primaryParams[field] = viewParams[field] === undefined ? null : viewParams[field];
     });
   } else {

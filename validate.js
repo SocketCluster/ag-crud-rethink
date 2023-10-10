@@ -54,13 +54,13 @@ function validateViewQuery(query, schema) {
     throw new Error(`Invalid view query - The view ${query.view} was not defined in the schema under the type ${query.type}`);
   }
   let viewSchema = schema[query.type].views[query.view];
-  let hasPrimaryKeys = viewSchema.primaryKeys && viewSchema.primaryKeys.length > 0;
+  let hasPrimaryKeys = viewSchema.primaryFields && viewSchema.primaryFields.length > 0;
   if (hasPrimaryKeys || (viewSchema.paramFields && viewSchema.paramFields.length > 0)) {
     validateRequiredViewParams(query.viewParams);
   }
   if (hasPrimaryKeys) {
     let missingFields = [];
-    viewSchema.primaryKeys.forEach((field) => {
+    viewSchema.primaryFields.forEach((field) => {
       if (query.viewParams[field] == null) {
         missingFields.push(field);
       }
@@ -71,7 +71,7 @@ function validateViewQuery(query, schema) {
           query.view
         } under the type ${
           query.type
-        } requires additional viewParams to meet primaryKeys requirements. The following fields were missing or null: ${
+        } requires additional viewParams to meet primaryFields requirements. The following fields were missing or null: ${
           missingFields.join(', ')
         }`
       );
