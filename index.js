@@ -1011,7 +1011,8 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
           } else {
             this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
               type: 'update',
-              value: cleanValue
+              value: cleanValue,
+              publisherId: socket && socket.id
             });
           }
         } else {
@@ -1027,7 +1028,8 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
             } else {
               this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
                 type: 'update',
-                value
+                value,
+                publisherId: socket && socket.id
               });
             }
           });
@@ -1217,7 +1219,8 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
 
         if (query.field) {
           this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
-            type: 'delete'
+            type: 'delete',
+            publisherId: socket && socket.id
           });
         } else {
           let deletedFields;
@@ -1239,7 +1242,8 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
           });
           Object.keys(deletedFields || {}).forEach((field) => {
             this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
-              type: 'delete'
+              type: 'delete',
+              publisherId: socket && socket.id
             });
           });
         }

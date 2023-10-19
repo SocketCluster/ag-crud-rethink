@@ -213,6 +213,36 @@ let AccessController = function (agServer, options) {
       continue;
     }
   });
+
+  agServer.setMiddleware(agServer.MIDDLEWARE_OUTBOUND, async (middlewareStream) => {
+    for await (let action of middlewareStream) {
+      let middlewareFunction = middleware[action.type];
+      if (middlewareFunction) {
+        let {type, allow, block, ...simpleAction} = action;
+        try {
+          await middlewareFunction(simpleAction);
+        } catch (error) {
+          action.block(error);
+          continue;
+        }
+      }
+
+      if (action.type === action.PUBLISH_OUT) {
+        let actionData = action.data;
+        if (actionData && typeof actionData === 'object') {
+          let {publisherId, ...payload} = actionData;
+          if (publisherId === action.socket.id) {
+            // Block silently.
+            action.block(false);
+            continue;
+          }
+          action.allow(payload);
+          continue;
+        }
+      }
+      action.allow();
+    }
+  });
 };
 
 AccessController.prototype = Object.create(AsyncStreamEmitter.prototype);
