@@ -236,7 +236,7 @@ let AccessController = function (agServer, options) {
             action.block(false);
             continue;
           }
-          action.allow(payload);
+          action.allow({data: payload});
           continue;
         }
       }
