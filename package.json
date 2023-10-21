@@ -1,6 +1,6 @@
 {
   "name": "ag-crud-rethink",
-  "version": "5.1.1",
+  "version": "5.1.2",
   "description": "A realtime REST layer plugin for SocketCluster using RethinkDB as the database",
   "main": "index.js",
   "scripts": {
@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "async": "1.4.2",
-    "async-stream-emitter": "^6.0.1",
+    "async-stream-emitter": "^7.0.1",
     "json-stable-stringify": "1.0.1",
     "rethinkdbdash": "^2.3.31"
   },
