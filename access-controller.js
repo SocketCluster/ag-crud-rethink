@@ -328,9 +328,9 @@ AccessController.prototype._applyPostAccessFilter = function (req, next) {
         // For collections.
         let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
         if (query.offset) {
-          rethinkQuery = rethinkQuery.slice(query.offset, query.offset + pageSize);
+          rethinkQuery = rethinkQuery.slice(query.offset, query.offset + pageSize).pluck('id');
         } else {
-          rethinkQuery = rethinkQuery.limit(pageSize);
+          rethinkQuery = rethinkQuery.limit(pageSize).pluck('id');
         }
         rethinkQuery.run(queryResponseHandler);
       }
