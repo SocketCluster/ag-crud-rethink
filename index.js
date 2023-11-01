@@ -1000,6 +1000,8 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
         let resourceChannelName = this._getResourceChannelName(query);
         this.publish(resourceChannelName);
 
+        let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
+
         if (query.field) {
           let cleanValue = query.value;
           if (cleanValue === undefined) {
@@ -1012,7 +1014,8 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
             this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
               type: 'update',
               value: cleanValue,
-              publisherId: socket && socket.id
+              publisherSocketId: socket && socket.id,
+              publisherId
             });
           }
         } else {
@@ -1029,7 +1032,8 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
               this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
                 type: 'update',
                 value,
-                publisherId: socket && socket.id
+                publisherSocketId: socket && socket.id,
+                publisherId
               });
             }
           });
@@ -1217,10 +1221,13 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
         let resourceChannelName = this._getResourceChannelName(query);
         this.publish(resourceChannelName);
 
+        let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
+
         if (query.field) {
           this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
             type: 'delete',
-            publisherId: socket && socket.id
+            publisherSocketId: socket && socket.id,
+            publisherId
           });
         } else {
           let deletedFields;
@@ -1243,7 +1250,8 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
           Object.keys(deletedFields || {}).forEach((field) => {
             this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
               type: 'delete',
-              publisherId: socket && socket.id
+              publisherSocketId: socket && socket.id,
+              publisherId
             });
           });
         }

@@ -230,8 +230,13 @@ let AccessController = function (agServer, options) {
       if (action.type === action.PUBLISH_OUT) {
         let actionData = action.data;
         if (actionData && typeof actionData === 'object') {
-          let {publisherId, ...payload} = actionData;
-          if (publisherId === action.socket.id) {
+          let {publisherSocketId, publisherId, ...payload} = actionData;
+          if (publisherSocketId === action.socket.id) {
+            if (publisherId) {
+              payload.publisherId = publisherId;
+              action.allow({data: payload});
+              continue;
+            }
             // Block silently.
             action.block(false);
             continue;
