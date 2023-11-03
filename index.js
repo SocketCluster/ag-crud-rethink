@@ -228,6 +228,7 @@ AGCRUDRethink.prototype._cleanupResourceChannel = function (resource) {
   let resourceChannelName = this._getResourceChannelName(resource);
   let resourceChannel = this.agServer.exchange.channel(resourceChannelName);
   resourceChannel.unsubscribe();
+  resourceChannel.kill();
 };
 
 AGCRUDRethink.prototype._handleResourceChange = function (resource) {
@@ -762,8 +763,20 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
 
   if (query.id) {
     let resourceChannelName = this._getResourceChannelName(query);
-    let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);
-    data = await this.rethink.table(query.type).get(query.id).run();
+    let isSubscribedToResourceChannel = this.agServer.exchange.isSubscribed(resourceChannelName, true);
+
+    if (!isSubscribedToResourceChannel) {
+      let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);
+      (async () => {
+        for await (let data of resourceChannel) {
+          this._handleResourceChange(query);
+        }
+      })();
+    }
+
+    data = await this.cache.pass(query, async () => {
+      return this.rethink.table(query.type).get(query.id).run();
+    });
   } else {
     let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
 
@@ -921,6 +934,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
     }
 
     let result = await this._updateDb(query.type, query.id, queryValue);
+    this.cache.update(query);
 
     let resourceChannelName = this._getResourceChannelName(query);
     this.publish(resourceChannelName);

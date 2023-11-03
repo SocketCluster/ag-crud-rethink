@@ -265,9 +265,6 @@ AccessController.prototype.applyPostAccessFilter = async function (req) {
       authToken: req.socket && req.socket.authToken,
       query
     };
-    if (!req.fetchResource) {
-      request.resource = req.resource;
-    }
 
     if (req.fetchResource) {
       let pageSize = query.pageSize || this.options.defaultPageSize;
@@ -281,12 +278,13 @@ AccessController.prototype.applyPostAccessFilter = async function (req) {
 
       if (query.id) {
         try {
-          request.resource = await this.rethink.table(query.type).get(query.id).run();
+          request.resource = await this.cache.pass(query, async () => {
+            return this.rethink.table(query.type).get(query.id).run();
+          });
         } catch (error) {
           this.emit('error', {error});
           throw new Error('Failed to preload resource due to an unexpected error');
         }
-        // this.cache.pass(query, dataProvider, queryResponseHandler); // TODO 000000
       } else {
         // For collections.
         try {
@@ -302,6 +300,8 @@ AccessController.prototype.applyPostAccessFilter = async function (req) {
           throw new Error('Executed an invalid query transformation');
         }
       }
+    } else {
+      request.resource = req.resource;
     }
 
     try {
