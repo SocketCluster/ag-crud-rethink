@@ -1,8 +1,8 @@
 const rethinkdbdash = require('rethinkdbdash');
-const async = require('async');
 const AccessController = require('./access-controller');
 const Cache = require('./cache');
 const AsyncStreamEmitter = require('async-stream-emitter');
+const WritableConsumableStream = require('writable-consumable-stream');
 const jsonStableStringify = require('json-stable-stringify');
 const {constructTransformedRethinkQuery} = require('./query-transformer');
 const {validateQuery, createModelValidator, typeBuilder} = require('./validate');
@@ -36,17 +36,17 @@ let AGCRUDRethink = function (options) {
     this.clientErrorMapper = (error) => error;
   }
 
-  Object.keys(this.schema).forEach((modelName) => {
+  for (let modelName of Object.keys(this.schema)) {
     let modelSchema = this.schema[modelName];
     let modelSchemaViews = modelSchema.views || {};
     let relations = modelSchema.relations || {};
 
-    Object.keys(modelSchemaViews).forEach((viewName) => {
+    for (let viewName of Object.keys(modelSchemaViews)) {
       let viewSchema = modelSchemaViews[viewName];
       let paramFields = viewSchema.paramFields || [];
 
       let foreignAffectingFieldsMap = viewSchema.foreignAffectingFields || {};
-      Object.keys(foreignAffectingFieldsMap).forEach((type) => {
+      for (let type of Object.keys(foreignAffectingFieldsMap)) {
         if (!this.schema[type]) {
           throw new Error(
             `The ${type} model does not exist so it cannot be declared as a key of foreignAffectingFields on the ${
@@ -58,7 +58,7 @@ let AGCRUDRethink = function (options) {
         let modelFields = this.schema[type].fields || {};
         let modelRelations = relations[type] || {};
 
-        paramFields.forEach((fieldName) => {
+        for (let fieldName of paramFields) {
           let foreignModelHasParamField = modelFields.hasOwnProperty(fieldName);
           let foreignRelationHasParamField = modelRelations.hasOwnProperty(fieldName);
 
@@ -75,7 +75,7 @@ let AGCRUDRethink = function (options) {
               } model.`
             );
           }
-        });
+        }
 
         let affectingFields = foreignAffectingFieldsMap[type];
 
@@ -89,10 +89,10 @@ let AGCRUDRethink = function (options) {
             parentType: modelName
           };
         }
-      });
-    });
+      }
+    }
 
-    Object.keys(relations).forEach((sourceType) => {
+    for (let sourceType of Object.keys(relations)) {
       if (!this.schema[sourceType]) {
         throw new Error(
           `The ${sourceType} model does not exist so it cannot be declared as a relation on the ${
@@ -107,10 +107,10 @@ let AGCRUDRethink = function (options) {
       if (!this._typeRelations[sourceType][modelName]) {
         this._typeRelations[sourceType][modelName] = fieldRelations;
       }
-    });
+    }
 
     this.modelValidators[modelName] = createModelValidator(modelName, modelSchema.fields);
-  });
+  }
 
   this.options.modelValidators = this.modelValidators;
 
@@ -145,8 +145,6 @@ let AGCRUDRethink = function (options) {
       this._cleanupResourceChannel(query);
     }
   })();
-
-  this._resourceReadBuffer = {};
 
   if (this.agServer) {
     this.accessFilter = new AccessController(this.agServer, this.options);
@@ -286,9 +284,9 @@ AGCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, ty
   if (viewSchema && viewSchema.primaryFields) {
     primaryParams = {};
 
-    viewSchema.primaryFields.forEach((field) => {
+    for (let field of viewSchema.primaryFields) {
       primaryParams[field] = viewParams[field] === undefined ? null : viewParams[field];
-    });
+    }
   } else {
     primaryParams = viewParams || {};
   }
@@ -308,16 +306,16 @@ AGCRUDRethink.prototype.getModifiedResourceFields = function (updateDetails) {
   let newResource = updateDetails.newResource || {};
   let modifiedFieldsMap = {};
 
-  Object.keys(oldResource).forEach((fieldName) => {
+  for (let fieldName of Object.keys(oldResource)) {
     if (oldResource[fieldName] !== newResource[fieldName]) {
       modifiedFieldsMap[fieldName] = {before: oldResource[fieldName], after: newResource[fieldName]};
     }
-  });
-  Object.keys(newResource).forEach((fieldName) => {
+  }
+  for (let fieldName of Object.keys(newResource)) {
     if (!modifiedFieldsMap.hasOwnProperty(fieldName) && newResource[fieldName] !== oldResource[fieldName]) {
       modifiedFieldsMap[fieldName] = {before: oldResource[fieldName], after: newResource[fieldName]};
     }
-  });
+  }
 
   return modifiedFieldsMap;
 };
@@ -359,7 +357,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     })
   );
 
-  allViewSchemas.forEach((viewData) => {
+  for (let viewData of allViewSchemas) {
     let viewName = viewData.name;
     let viewSchema = viewData.schema;
     let paramFields = viewSchema.paramFields || [];
@@ -368,7 +366,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     let params = {};
     let affectingData = {};
 
-    paramFields.forEach((fieldName) => {
+    for (let fieldName of paramFields) {
       let {success, value} = this._mapResourceField(resource, updateDetails.type, viewData.type);
       if (success) {
         params[fieldName] = value;
@@ -377,15 +375,16 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
         params[fieldName] = resource[fieldName];
         affectingData[fieldName] = resource[fieldName];
       }
-    });
-    affectingFields.forEach((fieldName) => {
+    }
+
+    for (let fieldName of affectingFields) {
       let {success, value} = this._mapResourceField(resource, updateDetails.type, viewData.type);
       if (success) {
         affectingData[fieldName] = value;
       } else {
         affectingData[fieldName] = resource[fieldName];
       }
-    });
+    }
 
     if (updateDetails.fields) {
       let updatedFields = updateDetails.fields;
@@ -394,12 +393,12 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
       let affectingFieldsLookup = {
         id: true
       };
-      paramFields.forEach((fieldName) => {
+      for (let fieldName of paramFields) {
         affectingFieldsLookup[fieldName] = true;
-      });
-      affectingFields.forEach((fieldName) => {
+      }
+      for (let fieldName of affectingFields) {
         affectingFieldsLookup[fieldName] = true;
-      });
+      }
 
       let modifiedFieldsLength = updatedFields.length;
       for (let i = 0; i < modifiedFieldsLength; i++) {
@@ -426,7 +425,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
         affectingData
       });
     }
-  });
+  }
   return affectedViews;
 };
 
@@ -482,7 +481,7 @@ AGCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
 
   let updatedFields = updateDetails.fields || [];
   if (Array.isArray(updatedFields)) {
-    updatedFields.forEach((fieldName) => {
+    for (let fieldName of updatedFields) {
       let resourcePropertyChannelName = this._getResourcePropertyChannelName({
         type: updateDetails.type,
         id: updateDetails.id,
@@ -490,10 +489,10 @@ AGCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
       });
       // Notify individual field subscribers about the change.
       this.publish(resourcePropertyChannelName);
-    });
+    }
   } else {
     // Notify individual field subscribers about the change and provide the new value.
-    Object.keys(updatedFields).forEach((fieldName) => {
+    for (let fieldName of Object.keys(updatedFields)) {
       let resourcePropertyChannelName = this._getResourcePropertyChannelName({
         type: updateDetails.type,
         id: updateDetails.id,
@@ -509,7 +508,7 @@ AGCRUDRethink.prototype.notifyResourceUpdate = function (updateDetails) {
           value: fieldValue
         });
       }
-    });
+    }
   }
 };
 
@@ -618,15 +617,15 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
     fields: updatedFieldsList
   });
 
-  newResourceAffectedViews.forEach((viewData) => {
+  for (let viewData of newResourceAffectedViews) {
     newViewDataMap[viewData.view] = viewData;
-  });
+  }
 
-  oldResourceAffectedViews.forEach((viewData) => {
+  for (let viewData of oldResourceAffectedViews) {
     oldViewParamsMap[viewData.view] = viewData.params;
-  });
+  }
 
-  oldResourceAffectedViews.forEach((viewData) => {
+  for (let viewData of oldResourceAffectedViews) {
     let operation;
     if (updateDetails.newResource == null) {
       operation = {
@@ -651,9 +650,9 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
       view: viewData.view,
       params: viewData.params
     }, operation);
-  });
+  }
 
-  newResourceAffectedViews.forEach((viewData) => {
+  for (let viewData of newResourceAffectedViews) {
     if (!this._areObjectsEqual(oldViewParamsMap[viewData.view], viewData.params)) {
       let operation;
       if (updateDetails.oldResource == null) {
@@ -679,7 +678,7 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
         params: viewData.params
       }, operation);
     }
-  });
+  }
 };
 
 // Add a new document to a collection. This will send a change notification to each
@@ -691,86 +690,53 @@ AGCRUDRethink.prototype.create = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._create = async function (query, socket) {
-  return new Promise((resolve, reject) => {
-    let modelValidator = this.modelValidators[query.type];
+  let modelValidator = this.modelValidators[query.type];
 
-    let savedHandler = (err, result) => {
-      if (err) {
-        this.emit('error', {error: err});
-        this.emit('createFail', {query, error: err});
-        reject(err);
-      } else {
-        let resourceChannelName = this._getResourceChannelName({
-          type: query.type,
-          id: result.id
-        });
-        this.publish(resourceChannelName);
-
-        let affectedViewData = this.getQueryAffectedViews(query, result);
-        affectedViewData.forEach((viewData) => {
-          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-            type: 'create',
-            value: {
-              id: result.id,
-              ...viewData.affectingData
-            }
-          });
-        });
-
-        this.emit('create', {query, result});
-        resolve(result.id);
-      }
-    };
-
+  try {
     if (modelValidator == null) {
       let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
       error.name = 'CRUDInvalidModelType';
-      savedHandler(error);
-    } else if (query.value && typeof query.value === 'object') {
-      try {
-        query.value = modelValidator(query.value);
-      } catch (error) {
-        savedHandler(error);
-        return;
-      }
-      this.rethink.table(query.type)
-        .insert(query.value, {returnChanges: true})
-        .run()
-        .then((result) => {
-          if (result.errors) {
-            savedHandler(errors.create(result.first_error));
-            return;
-          }
-          savedHandler(null, result.changes[0].new_val);
-        })
-        .catch((err) => savedHandler(err));
-    } else {
+      throw error;
+    }
+    if (!query.value || typeof query.value !== 'object') {
       let error = new Error('Cannot create a document from a primitive - Must be an object');
       error.name = 'CRUDInvalidParams';
-      savedHandler(error);
+      throw error;
     }
-  });
-};
+    query.value = modelValidator(query.value);
 
-AGCRUDRethink.prototype._appendToResourceReadBuffer = function (resourceChannelName, loadedHandler) {
-  if (!this._resourceReadBuffer[resourceChannelName]) {
-    this._resourceReadBuffer[resourceChannelName] = [];
-  }
-  this._resourceReadBuffer[resourceChannelName].push(loadedHandler);
-};
+    let result = await this.rethink.table(query.type)
+      .insert(query.value, {returnChanges: true})
+      .run();
+    if (result.errors) {
+      throw errors.create(result.first_error);
+    }
+    result = result.changes[0].new_val;
+    let resourceChannelName = this._getResourceChannelName({
+      type: query.type,
+      id: result.id
+    });
+    this.publish(resourceChannelName);
 
-AGCRUDRethink.prototype._processResourceReadBuffer = function (error, resourceChannelName, query, dataProvider) {
-  let callbackList = this._resourceReadBuffer[resourceChannelName] || [];
-  if (error) {
-    callbackList.forEach((callback) => {
-      callback(error);
-    });
-  } else {
-    callbackList.forEach((callback) => {
-      this.cache.pass(query, dataProvider, callback);
-    });
+    let affectedViewData = this.getQueryAffectedViews(query, result);
+    for (let viewData of affectedViewData) {
+      this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+        type: 'create',
+        value: {
+          id: result.id,
+          ...viewData.affectingData
+        }
+      });
+    }
+    this.emit('create', {query, result});
+
+    return result.id;
+
+  } catch (error) {
+    this.emit('error', {error});
+    this.emit('createFail', {query, error});
+    throw error;
   }
-  delete this._resourceReadBuffer[resourceChannelName];
 };
 
 // Read either a collection of IDs, a single document or a single field
@@ -783,199 +749,126 @@ AGCRUDRethink.prototype.read = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._read = async function (query, socket) {
-  return new Promise((resolve, reject) => {
-    let pageSize = query.pageSize || this.options.defaultPageSize;
+  let pageSize = query.pageSize || this.options.defaultPageSize;
+  let modelValidator = this.modelValidators[query.type];
+  if (modelValidator == null) {
+    let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
+    error.name = 'CRUDInvalidModelType';
+    throw error;
+  }
 
-    let loadedHandler = async (err, data, count) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      // If socket does not exist, then the CRUD operation comes from the server-side
-      // and we don't need to pass it through an accessFilter.
-      let applyPostAccessFilter;
-      if (socket && this.accessFilter) {
-        applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
-      } else {
-        applyPostAccessFilter = () => Promise.resolve();
-      }
-      let accessFilterRequest = {
-        r: this.rethink,
-        socket,
-        action: 'read',
-        authToken: socket && socket.authToken,
-        query,
-        resource: data
-      };
+  let data;
+  let count;
 
-      try {
-        await applyPostAccessFilter(accessFilterRequest);
-      } catch (error) {
-        reject(error);
-        return;
-      }
-      let result;
-      if (query.id) {
-        if (query.field) {
-          if (data == null) {
-            data = {};
-          }
-          result = data[query.field];
-        } else {
-          result = data;
-        }
-      } else {
-        let documentList = [];
-        let resultCount = Math.min(data.length, pageSize);
+  if (query.id) {
+    let resourceChannelName = this._getResourceChannelName(query);
+    let isSubscribedToResourceChannel = this.agServer.exchange.isSubscribed(resourceChannelName);
+    // let isSubscribedToResourceChannelOrPending = this.agServer.exchange.isSubscribed(resourceChannelName, true);// TODO 000 DELETE?
+    // let isSubcriptionPending = !isSubscribedToResourceChannel && isSubscribedToResourceChannelOrPending;
 
-        for (let i = 0; i < resultCount; i++) {
-          documentList.push(data[i].id || null);
-        }
-        result = {
-          data: documentList
-        };
-
-        if (query.getCount) {
-          result.count = count;
-        }
-
-        if (data.length < pageSize + 1) {
-          result.isLastPage = true;
-        }
-      }
-      // Return null instead of undefined - That way the frontend will know
-      // that the value was read but didn't exist (or was null).
-      if (result === undefined) {
-        result = null;
-      }
-
-      resolve(result);
-    };
-
-    let modelValidator = this.modelValidators[query.type];
-    if (modelValidator == null) {
-      let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
-      error.name = 'CRUDInvalidModelType';
-      loadedHandler(error);
+    if (isSubscribedToResourceChannel) {
+      data = await this.rethink.table(query.type).get(query.id).run();
     } else {
-      if (query.id) {
-        let dataProvider = (cb) => {
-          this.rethink.table(query.type)
-            .get(query.id)
-            .run()
-            .then((result) => {
-              cb(null, result);
-            })
-            .catch((err) => cb(err));
-        };
-        let resourceChannelName = this._getResourceChannelName(query);
+      let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);// TODO 000 CLEANUP CHANNEL WHEN IT's no longer used.
 
-        let isSubscribedToResourceChannel = this.agServer.exchange.isSubscribed(resourceChannelName);
-        let isSubscribedToResourceChannelOrPending = this.agServer.exchange.isSubscribed(resourceChannelName, true);
-        let isSubcriptionPending = !isSubscribedToResourceChannel && isSubscribedToResourceChannelOrPending;
-
-        this._appendToResourceReadBuffer(resourceChannelName, loadedHandler);
-
-        if (isSubscribedToResourceChannel) {
-          // If it is fully subscribed, we can process the request straight away since we are
-          // confident that the data is up to date (in real-time).
-          this._processResourceReadBuffer(null, resourceChannelName, query, dataProvider);
-        } else if (!isSubcriptionPending) {
-          // If there is no pending subscription, then we should create one and process the
-          // buffer when we're subscribed.
-          let handleResourceSubscribe = () => {
-            resourceChannel.killListener('subscribeFail');
-            this._processResourceReadBuffer(null, resourceChannelName, query, dataProvider);
-          };
-          let handleResourceSubscribeFailure = (err) => {
-            resourceChannel.killListener('subscribe');
-            let error = new Error('Failed to subscribe to resource channel for the ' + query.type + ' model');
-            error.name = 'FailedToSubscribeToResourceChannel';
-            this._processResourceReadBuffer(error, resourceChannelName, query, dataProvider);
-          };
-
-          let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);
-
-          (async () => {
-            for await (let data of resourceChannel) {
-              this._handleResourceChange(query);
-            }
-          })();
-
-          if (resourceChannel.state === 'subscribed') {
-            this._processResourceReadBuffer(null, resourceChannelName, query, dataProvider);
-          } else {
-            (async () => {
-              await resourceChannel.listener('subscribe').once();
-              handleResourceSubscribe();
-            })();
-            (async () => {
-              let {error} = await resourceChannel.listener('subscribeFail').once();
-              handleResourceSubscribeFailure(error);
-            })();
-          }
-        }
+      if (resourceChannel.state === 'subscribed') {
+        data = await this.rethink.table(query.type).get(query.id).run();
       } else {
-        let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
-
-        let tasks = [];
-
-        if (query.offset) {
-          tasks.push((cb) => {
-            // Get one extra record just to check if we have the last value in the sequence.
-            rethinkQuery.slice(query.offset, query.offset + pageSize + 1).pluck('id').run()
-              .then((result) => {
-                if (result.errors) {
-                  cb(errors.create(result.first_error));
-                  return;
-                }
-                cb(null, result);
-              })
-              .catch((err) => cb(err));
-          });
-        } else {
-          tasks.push((cb) => {
-            // Get one extra record just to check if we have the last value in the sequence.
-            rethinkQuery.limit(pageSize + 1).pluck('id').run()
-              .then((result) => {
-                if (result.errors) {
-                  cb(errors.create(result.first_error));
-                  return;
-                }
-                cb(null, result);
-              })
-              .catch((err) => cb(err));
-          });
+        let event = await Promise.race([
+          resourceChannel.listener('subscribe').once(),
+          resourceChannel.listener('subscribeFail').once()
+        ]);
+        // TODO 00 check that event is not undefined
+        if (event.error) {
+          resourceChannel.killListener('subscribe');
+          let error = new Error(`Failed to subscribe to resource channel for the ${query.type} model`);
+          error.name = 'FailedToSubscribeToResourceChannel';
+          throw error;
         }
-
-        if (query.getCount) {
-          tasks.push((cb) => {
-            rethinkQuery.count().run()
-              .then((result) => {
-                if (result.errors) {
-                  cb(errors.create(result.first_error));
-                  return;
-                }
-                cb(null, result);
-              })
-              .catch((err) => cb(err));
-          });
-        }
-
-        async.parallel(tasks, (err, results) => {
-          if (err) {
-            let error = new Error(`Failed to generate view ${query.view} for type ${query.type} with viewParams ${JSON.stringify(query.viewParams)}`);
-            // Emit both the low level and high level error.
-            this.emit('error', {error: err});
-            this.emit('error', {error});
-            loadedHandler(error);
-          } else {
-            loadedHandler(null, results[0], results[1]);
-          }
-        });
+        resourceChannel.killListener('subscribeFail');
+        data = await this.rethink.table(query.type).get(query.id).run();
       }
     }
-  });
+  } else {
+    let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
+
+    let tasks = [];
+
+    if (query.offset) {
+      tasks.push(
+        rethinkQuery.slice(query.offset, query.offset + pageSize + 1).pluck('id').run()
+      );
+    } else {
+      tasks.push(
+        rethinkQuery.limit(pageSize + 1).pluck('id').run()
+      );
+    }
+    if (query.getCount) {
+      tasks.push(
+        rethinkQuery.count().run()
+      );
+    }
+
+    let results = await Promise.all(tasks);
+    data = results[0];
+    count = results[1];
+  }
+
+  // If socket does not exist, then the CRUD operation comes from the server-side
+  // and we don't need to pass it through an accessFilter.
+  let applyPostAccessFilter;
+  if (socket && this.accessFilter) {
+    applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
+  } else {
+    applyPostAccessFilter = () => Promise.resolve();
+  }
+  let accessFilterRequest = {
+    r: this.rethink,
+    socket,
+    action: 'read',
+    authToken: socket && socket.authToken,
+    query,
+    resource: data
+  };
+
+  await applyPostAccessFilter(accessFilterRequest);
+
+  let result;
+  if (query.id) {
+    if (query.field) {
+      if (data == null) {
+        data = {};
+      }
+      result = data[query.field];
+    } else {
+      result = data;
+    }
+  } else {
+    let documentList = [];
+    let resultCount = Math.min(data.length, pageSize);
+
+    for (let i = 0; i < resultCount; i++) {
+      documentList.push(data[i].id || null);
+    }
+    result = {
+      data: documentList
+    };
+
+    if (query.getCount) {
+      result.count = count;
+    }
+
+    if (data.length < pageSize + 1) {
+      result.isLastPage = true;
+    }
+  }
+  // Return null instead of undefined - That way the frontend will know
+  // that the value was read but didn't exist (or was null).
+  if (result === undefined) {
+    return null;
+  }
+
+  return result;
 };
 
 // Update a single whole document or one or more fields within a document.
@@ -990,216 +883,158 @@ AGCRUDRethink.prototype.update = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._update = async function (query, socket) {
-  return new Promise((resolve, reject) => {
-    let savedHandler = (err, oldAffectedViewData, result) => {
-      if (err) {
-        this.emit('error', {error: err});
-        this.emit('updateFail', {query, error: err});
-        reject(err);
-      } else {
-        let resourceChannelName = this._getResourceChannelName(query);
-        this.publish(resourceChannelName);
+  let modelValidator = this.modelValidators[query.type];
 
-        let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
-
-        if (query.field) {
-          let cleanValue = query.value;
-          if (cleanValue === undefined) {
-            cleanValue = null;
-          }
-          if (typeof cleanValue === 'function') {
-            // Do not publish raw RethinkDB predicates or functions.
-            this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field);
-          } else {
-            this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
-              type: 'update',
-              value: cleanValue,
-              publisherSocketId: socket && socket.id,
-              publisherId
-            });
-          }
-        } else {
-          let queryValue = query.value || {};
-          Object.keys(queryValue).forEach((field) => {
-            let value = queryValue[field];
-            if (value === undefined) {
-              value = null;
-            }
-            if (typeof value === 'function') {
-              // Do not publish raw RethinkDB predicates or functions.
-              this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field);
-            } else {
-              this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
-                type: 'update',
-                value,
-                publisherSocketId: socket && socket.id,
-                publisherId
-              });
-            }
-          });
-        }
-
-        let oldViewDataMap = {};
-        oldAffectedViewData.forEach((viewData) => {
-          oldViewDataMap[`${viewData.view}:${viewData.type}`] = viewData;
-        });
-
-        let newAffectedViewData = this.getQueryAffectedViews(query, result);
-
-        newAffectedViewData.forEach((viewData) => {
-          let oldViewData = oldViewDataMap[`${viewData.view}:${viewData.type}`] || {};
-          let areViewParamsEqual = this._areObjectsEqual(oldViewData.params, viewData.params);
-
-          if (areViewParamsEqual) {
-            let areAffectingDataEqual = this._areObjectsEqual(oldViewData.affectingData, viewData.affectingData);
-
-            if (!areAffectingDataEqual) {
-              this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-                type: 'update',
-                value: {
-                  id: query.id,
-                  ...viewData.affectingData
-                }
-              });
-            }
-          } else {
-            this.publish(this._getViewChannelName(oldViewData.view, oldViewData.params, oldViewData.type), {
-              type: 'update',
-              value: {
-                id: query.id,
-                ...viewData.affectingData
-              }
-            });
-            this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-              type: 'update',
-              value: {
-                id: query.id,
-                ...viewData.affectingData
-              }
-            });
-          }
-        });
-        this.emit('update', {query, result});
-        resolve();
-      }
-    };
-
-    let modelValidator = this.modelValidators[query.type];
+  try {
     if (modelValidator == null) {
-      let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
+      let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
       error.name = 'CRUDInvalidModelType';
-      savedHandler(error);
-    } else if (query.id == null) {
+      throw error;
+    }
+    if (query.id == null) {
       let error = new Error('Cannot update document without specifying an id');
       error.name = 'CRUDInvalidParams';
-      savedHandler(error);
+      throw error;
+    }
+
+    // If socket does not exist, then the CRUD operation comes from the server-side
+    // and we don't need to pass it through a accessFilter.
+    let applyPostAccessFilter;
+    if (socket && this.accessFilter) {
+      applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
     } else {
-      let tasks = [];
+      applyPostAccessFilter = () => Promise.resolve();
+    }
 
-      // If socket does not exist, then the CRUD operation comes from the server-side
-      // and we don't need to pass it through a accessFilter.
-      let applyPostAccessFilter;
-      if (socket && this.accessFilter) {
-        applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
-      } else {
-        applyPostAccessFilter = () => Promise.resolve();
+    let modelInstance;
+
+    if (query.field) {
+      if (query.field === 'id') {
+        let error = new Error('Cannot modify the id field of an existing document');
+        error.name = 'CRUDInvalidOperation';
+        throw error;
       }
+      modelInstance = await this.rethink.table(query.type).get(query.id).run();
+    } else {
+      if (!query.value || typeof query.value !== 'object') {
+        let error = new Error('Cannot replace document with a primitive - Must be an object');
+        error.name = 'CRUDInvalidOperation';
+        throw error;
+      }
+      modelInstance = await this.rethink.table(query.type).get(query.id).run();
+    }
 
-      let accessFilterRequest = {
-        r: this.rethink,
-        socket,
-        action: 'update',
-        authToken: socket && socket.authToken,
-        query
-      };
+    let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
 
-      let modelInstance;
-      let loadModelInstanceAndGetViewData = (cb) => {
-        this.rethink.table(query.type)
-          .get(query.id)
-          .run()
-          .then((result) => {
-            modelInstance = result;
-            let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
-            cb(null, oldAffectedViewData);
-          })
-          .catch((err) => cb(err));
-      };
+    let accessFilterRequest = {
+      r: this.rethink,
+      socket,
+      action: 'update',
+      authToken: socket && socket.authToken,
+      query,
+      resource: modelInstance
+    };
 
-      if (query.field) {
-        if (query.field === 'id') {
-          let error = new Error('Cannot modify the id field of an existing document');
-          error.name = 'CRUDInvalidOperation';
-          savedHandler(error);
+    await applyPostAccessFilter(accessFilterRequest);
+
+    let queryValue;
+
+    if (query.field) {
+      queryValue = modelValidator({[query.field]: query.value}, true);
+    } else {
+      queryValue = modelValidator(query.value, true);
+    }
+
+    let result = await this._updateDb(query.type, query.id, queryValue);
+
+    let resourceChannelName = this._getResourceChannelName(query);
+    this.publish(resourceChannelName);
+
+    let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
+
+    if (query.field) {
+      if (queryValue === undefined) {
+        queryValue = null;
+      }
+      if (typeof queryValue === 'function') {
+        // Do not publish raw RethinkDB predicates or functions.
+        this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field);
+      } else {
+        this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
+          type: 'update',
+          value: queryValue,
+          publisherSocketId: socket && socket.id,
+          publisherId
+        });
+      }
+    } else {
+      queryValue = queryValue || {};
+      for (let field of Object.keys(queryValue)) {
+        let value = queryValue[field];
+        if (value === undefined) {
+          value = null;
+        }
+        if (typeof value === 'function') {
+          // Do not publish raw RethinkDB predicates or functions.
+          this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field);
         } else {
-          tasks.push(loadModelInstanceAndGetViewData);
+          this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
+            type: 'update',
+            value,
+            publisherSocketId: socket && socket.id,
+            publisherId
+          });
+        }
+      }
+    }
 
-          tasks.push(async (cb) => {
-            accessFilterRequest.resource = modelInstance;
-            try {
-              await applyPostAccessFilter(accessFilterRequest);
-            } catch (error) {
-              cb(error);
-              return;
+    let oldViewDataMap = {};
+    for (let viewData of oldAffectedViewData) {
+      oldViewDataMap[`${viewData.view}:${viewData.type}`] = viewData;
+    }
+
+    let newAffectedViewData = this.getQueryAffectedViews(query, result);
+
+    for (let viewData of newAffectedViewData) {
+      let oldViewData = oldViewDataMap[`${viewData.view}:${viewData.type}`] || {};
+      let areViewParamsEqual = this._areObjectsEqual(oldViewData.params, viewData.params);
+
+      if (areViewParamsEqual) {
+        let areAffectingDataEqual = this._areObjectsEqual(oldViewData.affectingData, viewData.affectingData);
+
+        if (!areAffectingDataEqual) {
+          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+            type: 'update',
+            value: {
+              id: query.id,
+              ...viewData.affectingData
             }
-
-            let queryValue;
-
-            try {
-              queryValue = modelValidator({[query.field]: query.value}, true);
-            } catch (error) {
-              cb(error);
-              return;
-            }
-
-            this._updateDb(query.type, query.id, queryValue)
-              .then((result) => {
-                cb(null, result);
-              })
-              .catch((err) => cb(err));
           });
         }
       } else {
-        if (query.value && typeof query.value === 'object') {
-          tasks.push(loadModelInstanceAndGetViewData);
-
-          tasks.push(async (cb) => {
-            accessFilterRequest.resource = modelInstance;
-            try {
-              await applyPostAccessFilter(accessFilterRequest);
-            } catch (error) {
-              cb(error);
-              return;
-            }
-            try {
-              query.value = modelValidator(query.value, true);
-            } catch (error) {
-              cb(error);
-              return;
-            }
-            this._updateDb(query.type, query.id, query.value)
-              .then((result) => {
-                cb(null, result);
-              })
-              .catch((err) => cb(err));
-          });
-        } else {
-          let error = new Error('Cannot replace document with a primitive - Must be an object');
-          error.name = 'CRUDInvalidOperation';
-          savedHandler(error);
-        }
-      }
-      if (tasks.length) {
-        async.series(tasks, (err, results) => {
-          if (err) {
-            savedHandler(err);
-          } else {
-            savedHandler(null, results[0], results[1]);
+        this.publish(this._getViewChannelName(oldViewData.view, oldViewData.params, oldViewData.type), {
+          type: 'update',
+          value: {
+            id: query.id,
+            ...viewData.affectingData
+          }
+        });
+        this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+          type: 'update',
+          value: {
+            id: query.id,
+            ...viewData.affectingData
           }
         });
       }
     }
-  });
+    this.emit('update', {query, result});
+
+  } catch (error) {
+    this.emit('error', {error});
+    this.emit('updateFail', {query, error});
+    throw error;
+  }
 };
 
 // Delete a single document or field from a document.
@@ -1211,217 +1046,169 @@ AGCRUDRethink.prototype.delete = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._delete = async function (query, socket) {
-  return new Promise((resolve, reject) => {
-    let deletedHandler = (err, oldAffectedViewData, result) => {
-      if (err) {
-        this.emit('error', {error: err});
-        this.emit('deleteFail', {query, error: err});
-        reject(err);
-      } else {
-        let resourceChannelName = this._getResourceChannelName(query);
-        this.publish(resourceChannelName);
-
-        let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
-
-        if (query.field) {
-          this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
-            type: 'delete',
-            publisherSocketId: socket && socket.id,
-            publisherId
-          });
-        } else {
-          let deletedFields;
-          let modelSchema = this.schema[query.type];
-          if (modelSchema && modelSchema.fields) {
-            deletedFields = modelSchema.fields;
-          } else {
-            deletedFields = result;
-          }
-
-          oldAffectedViewData.forEach((viewData) => {
-            this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-              type: 'delete',
-              value: {
-                id: query.id,
-                ...viewData.affectingData
-              }
-            });
-          });
-          Object.keys(deletedFields || {}).forEach((field) => {
-            this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
-              type: 'delete',
-              publisherSocketId: socket && socket.id,
-              publisherId
-            });
-          });
-        }
-        this.emit('delete', {query, result});
-        resolve();
-      }
-    };
-
+  try {
     let modelValidator = this.modelValidators[query.type];
     if (modelValidator == null) {
-      let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
+      let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
       error.name = 'CRUDInvalidModelType';
-      deletedHandler(error);
-    } else {
-      let tasks = [];
-
-      if (query.id == null) {
-        let error = new Error('Cannot delete an entire collection - ID must be provided');
-        error.name = 'CRUDInvalidParams';
-        deletedHandler(error);
-      } else {
-        let modelInstance;
-        tasks.push((cb) => {
-          this.rethink.table(query.type)
-            .get(query.id)
-            .run()
-            .then((result) => {
-              modelInstance = result;
-              let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
-              cb(null, oldAffectedViewData);
-            })
-            .catch((err) => cb(err));
-        });
-
-        // If socket does not exist, then the CRUD operation comes from the server-side
-        // and we don't need to pass it through a accessFilter.
-        let applyPostAccessFilter;
-        if (socket && this.accessFilter) {
-          applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
-        } else {
-          applyPostAccessFilter = () => Promise.resolve();
-        }
-
-        let accessFilterRequest = {
-          r: this.rethink,
-          socket,
-          action: 'delete',
-          authToken: socket && socket.authToken,
-          query
-        };
-
-        if (query.field == null) {
-          tasks.push(async (cb) => {
-            accessFilterRequest.resource = modelInstance;
-            try {
-              await applyPostAccessFilter(accessFilterRequest);
-            } catch (error) {
-              cb(error);
-              return;
-            }
-            this.rethink.table(query.type).get(query.id).delete().run()
-              .then((result) => {
-                if (result.errors) {
-                  cb(errors.create(result.first_error));
-                  return;
-                }
-                cb(null, result);
-              })
-              .catch((err) => cb(err));
-          });
-        } else {
-          tasks.push(async (cb) => {
-            accessFilterRequest.resource = modelInstance;
-            try {
-              await applyPostAccessFilter(accessFilterRequest);
-            } catch (error) {
-              cb(error);
-              return;
-            }
-            try {
-              modelValidator({[query.field]: undefined}, true);
-            } catch (error) {
-              cb(error);
-              return;
-            }
-            this.rethink.table(query.type).get(query.id)
-              .replace(
-                (row) => {
-                  return row.without(query.field);
-                },
-                {returnChanges: true}
-              )
-              .run()
-              .then((result) => {
-                if (result.errors) {
-                  cb(errors.create(result.first_error));
-                  return;
-                }
-                cb(null, result.changes.length ? result.changes[0].new_val : {});
-              })
-              .catch((err) => cb(err));
-          });
-        }
-        if (tasks.length) {
-          async.series(tasks, (err, results) => {
-            if (err) {
-              deletedHandler(err);
-            } else {
-              deletedHandler(null, results[0], results[1]);
-            }
-          });
-        }
-      }
+      throw error;
     }
-  });
+
+  } catch (error) {
+    this.emit('error', {error});
+    this.emit('deleteFail', {query, error});
+    throw error;
+  }
+
+  if (!query.id) {
+    let error = new Error('Cannot delete an entire collection - ID must be provided');
+    error.name = 'CRUDInvalidParams';
+    throw error;
+  }
+
+  // If socket does not exist, then the CRUD operation comes from the server-side
+  // and we don't need to pass it through a accessFilter.
+  let applyPostAccessFilter;
+  if (socket && this.accessFilter) {
+    applyPostAccessFilter = this.accessFilter.applyPostAccessFilter.bind(this.accessFilter);
+  } else {
+    applyPostAccessFilter = () => Promise.resolve();
+  }
+
+  let modelInstance = await this.rethink.table(query.type).get(query.id).run();
+  let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
+
+  let accessFilterRequest = {
+    r: this.rethink,
+    socket,
+    action: 'delete',
+    authToken: socket && socket.authToken,
+    query,
+    resource: modelInstance
+  };
+
+  await applyPostAccessFilter(accessFilterRequest);
+
+  let result;
+
+  if (query.field) {
+    modelValidator({[query.field]: undefined}, true);
+    result = await this.rethink.table(query.type).get(query.id)
+      .replace(
+        (row) => {
+          return row.without(query.field);
+        },
+        {returnChanges: true}
+      )
+      .run();
+    if (result.errors) {
+      throw errors.create(result.first_error);
+    }
+    result = result.changes.length ? result.changes[0].new_val : {};
+  } else {
+    // TODO 000 What to do about this result?
+    result = await this.rethink.table(query.type).get(query.id).delete().run();
+    if (result.errors) {
+      throw errors.create(result.first_error);
+    }
+  }
+
+  let resourceChannelName = this._getResourceChannelName(query);
+  this.publish(resourceChannelName);
+
+  let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
+
+  if (query.field) {
+    this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
+      type: 'delete',
+      publisherSocketId: socket && socket.id,
+      publisherId
+    });
+  } else {
+    let deletedFields;
+    let modelSchema = this.schema[query.type];
+    if (modelSchema && modelSchema.fields) {
+      deletedFields = modelSchema.fields;
+    } else {
+      deletedFields = result;
+    }
+
+    for (let viewData of oldAffectedViewData) {
+      this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+        type: 'delete',
+        value: {
+          id: query.id,
+          ...viewData.affectingData
+        }
+      });
+    }
+
+    for (let field of Object.keys(deletedFields || {})) {
+      this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
+        type: 'delete',
+        publisherSocketId: socket && socket.id,
+        publisherId
+      });
+    }
+  }
+  this.emit('delete', {query, result});
 };
 
 AGCRUDRethink.prototype._attachSocket = function (socket) {
+  let combinedStream = new WritableConsumableStream();
+
+  let actionHandlers = {
+    create: async (query) => {
+      return this._create(query, socket);
+    },
+    read: async (query) => {
+      return this._read(query, socket);
+    },
+    update: async (query) => {
+      return this._update(query, socket);
+    },
+    delete: async (query) => {
+      return this._delete(query, socket);
+    }
+  };
+
+  // The combined stream ensures that different events are fully processed
+  // in the same order as they arrive.
   (async () => {
-    for await (let request of socket.procedure('create')) {
+    // TODO 0000 ensure that this does not affect current backpressure handling
+    for await (let {action, request} of combinedStream) {
       let result;
       try {
-        result = await this._create(request.data, socket);
+        result = await actionHandlers[action](request.data);
       } catch (error) {
         request.error(
-          this.clientErrorMapper(error, 'create', request.data)
+          this.clientErrorMapper(error, action, request.data)
         );
         continue;
       }
       request.end(result);
+    }
+
+  })();
+
+  (async () => {
+    for await (let request of socket.procedure('create')) {
+      combinedStream.write({action: 'create', request});
     }
   })();
   (async () => {
     for await (let request of socket.procedure('read')) {
-      let result;
-      try {
-        result = await this._read(request.data, socket);
-      } catch (error) {
-        request.error(
-          this.clientErrorMapper(error, 'read', request.data)
-        );
-        continue;
-      }
-      request.end(result);
+      combinedStream.write({action: 'read', request});
     }
   })();
   (async () => {
     for await (let request of socket.procedure('update')) {
-      try {
-        await this._update(request.data, socket);
-      } catch (error) {
-        request.error(
-          this.clientErrorMapper(error, 'update', request.data)
-        );
-        continue;
-      }
-      request.end();
+      combinedStream.write({action: 'update', request});
     }
   })();
   (async () => {
     for await (let request of socket.procedure('delete')) {
-      try {
-        await this._delete(request.data, socket);
-      } catch (error) {
-        request.error(
-          this.clientErrorMapper(error, 'delete', request.data)
-        );
-        continue;
-      }
-      request.end();
+      combinedStream.write({action: 'delete', request});
     }
   })();
 };

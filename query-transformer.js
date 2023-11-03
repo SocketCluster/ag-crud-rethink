@@ -11,10 +11,10 @@ module.exports.constructTransformedRethinkQuery = function (options, rethinkQuer
 
   let sanitizedViewParams = {};
   if (typeof viewParams === 'object' && viewParams != null) {
-    (viewMetaData.paramFields || []).forEach((field) => {
+    for (let field of (viewMetaData.paramFields || [])) {
       let value = viewParams[field];
       sanitizedViewParams[field] = value === undefined ? null : value;
-    });
+    }
   }
 
   let transformFn = viewMetaData.transform;

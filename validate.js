@@ -60,11 +60,11 @@ function validateViewQuery(query, schema) {
   }
   if (hasPrimaryKeys) {
     let missingFields = [];
-    viewSchema.primaryFields.forEach((field) => {
+    for (let field of viewSchema.primaryFields) {
       if (query.viewParams[field] == null) {
         missingFields.push(field);
       }
-    });
+    }
     if (missingFields.length > 0) {
       throw new Error(
         `Invalid view query - The view ${

@@ -253,18 +253,6 @@ let AccessController = function (agServer, options) {
 AccessController.prototype = Object.create(AsyncStreamEmitter.prototype);
 
 AccessController.prototype.applyPostAccessFilter = async function (req) {
-  return new Promise((resolve, reject) => {
-    this._applyPostAccessFilter(req, (error, result) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(result);
-    });
-  });
-};
-
-AccessController.prototype._applyPostAccessFilter = function (req, next) {
   let {query} = req;
   let postAccessFilter = this._getModelAccessFilter(query.type, 'post');
 
@@ -280,76 +268,59 @@ AccessController.prototype._applyPostAccessFilter = function (req, next) {
       request.resource = req.resource;
     }
 
-    let continueWithPostAccessFilter = () => {
-      (async () => {
-        try {
-          await postAccessFilter(request);
-        } catch (error) {
-          if (typeof error === 'boolean') {
-            error = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id);
-            error.name = 'CRUDBlockedError';
-            error.type = 'post';
-          }
-          next(error);
-
-          return;
-        }
-        next();
-      })();
-    };
-
     if (req.fetchResource) {
       let pageSize = query.pageSize || this.options.defaultPageSize;
 
       if (!this.schema[query.type]) {
-        let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
+        let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
         error.name = 'CRUDInvalidModelType';
-        next(error);
-        return;
+        this.emit('error', {error});
+        throw error;
       }
-
-      let queryResponseHandler = (error, resource) => {
-        if (error) {
-          this.emit('error', {error});
-          next(new Error('Executed an invalid query transformation'));
-        } else {
-          request.resource = resource;
-          continueWithPostAccessFilter();
-        }
-      };
 
       if (query.id) {
-        let dataProvider = (cb) => {
-          this.rethink.table(query.type)
-            .get(query.id)
-            .run()
-            .then((result) => {
-              cb(null, result);
-            })
-            .catch((err) => cb(err));
-        };
-        this.cache.pass(query, dataProvider, queryResponseHandler);
+        try {
+          request.resource = await this.rethink.table(query.type).get(query.id).run();
+        } catch (error) {
+          this.emit('error', {error});
+          throw new Error('Failed to preload resource due to an unexpected error');
+        }
+        // this.cache.pass(query, dataProvider, queryResponseHandler); // TODO 000000
       } else {
         // For collections.
-        let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
-        if (query.offset) {
-          rethinkQuery = rethinkQuery.slice(query.offset, query.offset + pageSize).pluck('id');
-        } else {
-          rethinkQuery = rethinkQuery.limit(pageSize).pluck('id');
+        try {
+          let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
+          if (query.offset) {
+            rethinkQuery = rethinkQuery.slice(query.offset, query.offset + pageSize).pluck('id');
+          } else {
+            rethinkQuery = rethinkQuery.limit(pageSize).pluck('id');
+          }
+          request.resource = await rethinkQuery.run();
+        } catch (error) {
+          this.emit('error', {error});
+          throw new Error('Executed an invalid query transformation');
         }
-        rethinkQuery.run(queryResponseHandler);
       }
-    } else {
-      continueWithPostAccessFilter();
+    }
+
+    try {
+      await postAccessFilter(request);
+    } catch (error) {
+      if (typeof error === 'boolean') {
+        error = new Error(`You are not permitted to perform a CRUD operation on the ${query.type} resource with ID ${query.id}`);
+        error.name = 'CRUDBlockedError';
+        error.type = 'post';
+      }
+      this.emit('error', {error});
+      throw error;
     }
   } else {
     if (this.options.blockPostByDefault) {
-      let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id + ' - No access filters found');
+      let crudBlockedError = new Error(`You are not permitted to perform a CRUD operation on the ${query.type} resource with ID ${query.id} - No access filters found`);
       crudBlockedError.name = 'CRUDBlockedError';
       crudBlockedError.type = 'post';
-      next(crudBlockedError);
-    } else {
-      next();
+      this.emit('error', {error: crudBlockedError});
+      throw crudBlockedError;
     }
   }
 };

@@ -11,10 +11,10 @@
     "url": "git://github.com/SocketCluster/ag-crud-rethink.git"
   },
   "dependencies": {
-    "async": "1.4.2",
     "async-stream-emitter": "^7.0.1",
     "json-stable-stringify": "1.0.1",
-    "rethinkdbdash": "^2.3.31"
+    "rethinkdbdash": "^2.3.31",
+    "writable-consumable-stream": "^4.1.0"
   },
   "keywords": [
     "socketcluster",
@@ -25,5 +25,5 @@
     "crud"
   ],
   "author": "Jonathan Gros-Dubois",
-  "license": "AGPL-3"
+  "license": "UNLICENSED"
 }
