@@ -685,7 +685,7 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
 // affected view (taking into account the affected page number within each view).
 // This allows views to update themselves on the front-end in real-time.
 AGCRUDRethink.prototype.create = async function (query, socket) {
-  this._validateQuery(query);
+  this._validateQuery({action: 'create', ...query});
   return this._create(query, socket);
 };
 
@@ -744,7 +744,7 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
 // A cache entry will automatically get cleared when ag-crud-rethink detects
 // a real-time change to a field which is cached.
 AGCRUDRethink.prototype.read = async function (query, socket) {
-  this._validateQuery(query);
+  this._validateQuery({action: 'read', ...query});
   return this._read(query, socket);
 };
 
@@ -762,33 +762,8 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
 
   if (query.id) {
     let resourceChannelName = this._getResourceChannelName(query);
-    let isSubscribedToResourceChannel = this.agServer.exchange.isSubscribed(resourceChannelName);
-    // let isSubscribedToResourceChannelOrPending = this.agServer.exchange.isSubscribed(resourceChannelName, true);// TODO 000 DELETE?
-    // let isSubcriptionPending = !isSubscribedToResourceChannel && isSubscribedToResourceChannelOrPending;
-
-    if (isSubscribedToResourceChannel) {
-      data = await this.rethink.table(query.type).get(query.id).run();
-    } else {
-      let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);// TODO 000 CLEANUP CHANNEL WHEN IT's no longer used.
-
-      if (resourceChannel.state === 'subscribed') {
-        data = await this.rethink.table(query.type).get(query.id).run();
-      } else {
-        let event = await Promise.race([
-          resourceChannel.listener('subscribe').once(),
-          resourceChannel.listener('subscribeFail').once()
-        ]);
-        // TODO 00 check that event is not undefined
-        if (event.error) {
-          resourceChannel.killListener('subscribe');
-          let error = new Error(`Failed to subscribe to resource channel for the ${query.type} model`);
-          error.name = 'FailedToSubscribeToResourceChannel';
-          throw error;
-        }
-        resourceChannel.killListener('subscribeFail');
-        data = await this.rethink.table(query.type).get(query.id).run();
-      }
-    }
+    let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);
+    data = await this.rethink.table(query.type).get(query.id).run();
   } else {
     let rethinkQuery = constructTransformedRethinkQuery(this.options, this.rethink.table(query.type), query.type, query.view, query.viewParams);
 
@@ -878,7 +853,7 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
 // has been affected by the update operation - This allows them to update
 // themselves in real-time.
 AGCRUDRethink.prototype.update = async function (query, socket) {
-  this._validateQuery(query);
+  this._validateQuery({action: 'update', ...query});
   return this._update(query, socket);
 };
 
@@ -1041,19 +1016,19 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
 // This will notify affected views so that they may update themselves
 // in real-time.
 AGCRUDRethink.prototype.delete = async function (query, socket) {
-  this._validateQuery(query);
+  this._validateQuery({action: 'delete', ...query});
   return this._delete(query, socket);
 };
 
 AGCRUDRethink.prototype._delete = async function (query, socket) {
+  let modelValidator = this.modelValidators[query.type];
+
   try {
-    let modelValidator = this.modelValidators[query.type];
     if (modelValidator == null) {
       let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
       error.name = 'CRUDInvalidModelType';
       throw error;
     }
-
   } catch (error) {
     this.emit('error', {error});
     this.emit('deleteFail', {query, error});
@@ -1090,7 +1065,6 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
   await applyPostAccessFilter(accessFilterRequest);
 
   let result;
-
   if (query.field) {
     modelValidator({[query.field]: undefined}, true);
     result = await this.rethink.table(query.type).get(query.id)
@@ -1106,11 +1080,12 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
     }
     result = result.changes.length ? result.changes[0].new_val : {};
   } else {
-    // TODO 000 What to do about this result?
-    result = await this.rethink.table(query.type).get(query.id).delete().run();
+    result = await this.rethink.table(query.type)
+      .get(query.id).delete({returnChanges: true}).run();
     if (result.errors) {
       throw errors.create(result.first_error);
     }
+    result = result.changes.length ? result.changes[0].new_val : {};
   }
 
   let resourceChannelName = this._getResourceChannelName(query);
@@ -1125,13 +1100,8 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       publisherId
     });
   } else {
-    let deletedFields;
     let modelSchema = this.schema[query.type];
-    if (modelSchema && modelSchema.fields) {
-      deletedFields = modelSchema.fields;
-    } else {
-      deletedFields = result;
-    }
+    let deletedFields = Object.keys(modelSchema?.fields || {});
 
     for (let viewData of oldAffectedViewData) {
       this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
@@ -1143,7 +1113,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       });
     }
 
-    for (let field of Object.keys(deletedFields || {})) {
+    for (let field of deletedFields) {
       this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
         type: 'delete',
         publisherSocketId: socket && socket.id,
@@ -1155,7 +1125,6 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._attachSocket = function (socket) {
-  let combinedStream = new WritableConsumableStream();
 
   let actionHandlers = {
     create: async (query) => {
@@ -1175,40 +1144,18 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
   // The combined stream ensures that different events are fully processed
   // in the same order as they arrive.
   (async () => {
-    // TODO 0000 ensure that this does not affect current backpressure handling
-    for await (let {action, request} of combinedStream) {
+    for await (let request of socket.procedure('crud')) {
+      let {action, ...query} = request?.data || {};
       let result;
       try {
-        result = await actionHandlers[action](request.data);
+        result = await actionHandlers[action](query);
       } catch (error) {
         request.error(
-          this.clientErrorMapper(error, action, request.data)
+          this.clientErrorMapper(error, action, query)
         );
         continue;
       }
       request.end(result);
-    }
-
-  })();
-
-  (async () => {
-    for await (let request of socket.procedure('create')) {
-      combinedStream.write({action: 'create', request});
-    }
-  })();
-  (async () => {
-    for await (let request of socket.procedure('read')) {
-      combinedStream.write({action: 'read', request});
-    }
-  })();
-  (async () => {
-    for await (let request of socket.procedure('update')) {
-      combinedStream.write({action: 'update', request});
-    }
-  })();
-  (async () => {
-    for await (let request of socket.procedure('delete')) {
-      combinedStream.write({action: 'delete', request});
     }
   })();
 };

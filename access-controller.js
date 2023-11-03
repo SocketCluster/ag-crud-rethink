@@ -51,7 +51,7 @@ let AccessController = function (agServer, options) {
       }
 
       if (action.type === action.INVOKE) {
-        if (action.procedure === 'create' || action.procedure === 'read' || action.procedure === 'update' || action.procedure === 'delete') {
+        if (action.procedure === 'crud') {
           let query = action.data;
           try {
             validateQuery(query, this.schema);
@@ -65,7 +65,7 @@ let AccessController = function (agServer, options) {
             continue;
           }
 
-          if (action.procedure === 'read' && query.view && typeof query.pageSize === 'number') {
+          if (query.action === 'read' && query.view && typeof query.pageSize === 'number') {
             let {maxPageSize} = this._getComputedModelSchema(query.type);
             if (maxPageSize != null && query.pageSize > maxPageSize) {
               let error = new Error(
@@ -86,7 +86,7 @@ let AccessController = function (agServer, options) {
             let crudRequest = {
               r: this.rethink,
               socket: action.socket,
-              action: action.procedure,
+              action: query.action,
               authToken,
               query
             };
@@ -138,6 +138,7 @@ let AccessController = function (agServer, options) {
           action.allow();
           continue;
         }
+        channelResourceQuery.action = action.SUBSCRIBE;
 
         // Sometimes the real viewParams may be different from what can be parsed from
         // the channel name; this is because some view params don't affect the real-time

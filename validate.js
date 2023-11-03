@@ -6,6 +6,16 @@ function validateQuery(query, schema) {
   if (queryType !== 'object') {
     throw new Error(`Invalid query - The query must be an object instead of ${queryType}`);
   }
+  if (
+    query.action !== 'create' &&
+    query.action !== 'read' &&
+    query.action !== 'update' &&
+    query.action !== 'delete' &&
+    query.action !== 'subscribe'
+  ) {
+    // Subscribe is not mentioned because it is added on the back end and is not a client-side concern.
+    throw new Error('Invalid query - The query action must be either create, read, update or delete');
+  }
   if (typeof query.type !== 'string') {
     throw new Error('Invalid query - The query type must be a string');
   }
