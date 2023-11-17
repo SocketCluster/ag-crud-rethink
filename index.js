@@ -632,8 +632,7 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
       operation = {
         type: 'delete',
         value: {
-          id: refResource.id,
-          ...viewData.affectingData
+          id: refResource.id
         }
       };
     } else {
@@ -641,8 +640,7 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
       operation = {
         type: 'update',
         value: {
-          id: refResource.id,
-          ...newViewData.affectingData
+          id: refResource.id
         }
       };
     }
@@ -660,16 +658,14 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
         operation = {
           type: 'create',
           value: {
-            id: refResource.id,
-            ...viewData.affectingData
+            id: refResource.id
           }
         };
       } else {
         operation = {
           type: 'update',
           value: {
-            id: refResource.id,
-            ...viewData.affectingData
+            id: refResource.id
           }
         };
       }
@@ -724,8 +720,7 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
       this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
         type: 'create',
         value: {
-          id: result.id,
-          ...viewData.affectingData
+          id: result.id
         }
       });
     }
@@ -995,8 +990,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
           this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
             type: 'update',
             value: {
-              id: query.id,
-              ...viewData.affectingData
+              id: query.id
             }
           });
         }
@@ -1004,15 +998,13 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
         this.publish(this._getViewChannelName(oldViewData.view, oldViewData.params, oldViewData.type), {
           type: 'update',
           value: {
-            id: query.id,
-            ...viewData.affectingData
+            id: query.id
           }
         });
         this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
           type: 'update',
           value: {
-            id: query.id,
-            ...viewData.affectingData
+            id: query.id
           }
         });
       }
@@ -1121,8 +1113,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
         type: 'delete',
         value: {
-          id: query.id,
-          ...viewData.affectingData
+          id: query.id
         }
       });
     }
