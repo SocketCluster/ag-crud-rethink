@@ -368,7 +368,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     let affectingData = {};
 
     for (let fieldName of paramFields) {
-      let {success, value} = this._mapResourceField(resource, updateDetails.type, viewData.type);
+      let {success, value} = this._mapResourceField(fieldName, resource[fieldName], updateDetails.type, viewData.type);
       if (success) {
         params[fieldName] = value;
         affectingData[fieldName] = value;
@@ -379,7 +379,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     }
 
     for (let fieldName of affectingFields) {
-      let {success, value} = this._mapResourceField(resource, updateDetails.type, viewData.type);
+      let {success, value} = this._mapResourceField(fieldName, resource[fieldName], updateDetails.type, viewData.type);
       if (success) {
         affectingData[fieldName] = value;
       } else {
