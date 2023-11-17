@@ -691,7 +691,7 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
 
   try {
     if (modelValidator == null) {
-      let error = new Error('The ' + query.type + ' model type is not supported - It is not part of the schema');
+      let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
       error.name = 'CRUDInvalidModelType';
       throw error;
     }

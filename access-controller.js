@@ -69,7 +69,7 @@ let AccessController = function (agServer, options) {
             let {maxPageSize} = this._getComputedModelSchema(query.type);
             if (maxPageSize != null && query.pageSize > maxPageSize) {
               let error = new Error(
-                'You are not permitted to access the ' + query.view + ' view of the ' + query.type + ' model - Query pageSize exceeded the maxPageSize of ' + maxPageSize
+                `You are not permitted to access the ${query.view} view of the ${query.type} model - Query pageSize exceeded the maxPageSize of ${maxPageSize}`
               );
               error.name = 'CRUDBlockedError';
               error.type = 'pre';
@@ -94,7 +94,9 @@ let AccessController = function (agServer, options) {
               await preAccessFilter(crudRequest);
             } catch (error) {
               if (typeof error === 'boolean') {
-                error = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id);
+                error = new Error(
+                  `You are not permitted to perform a CRUD operation on the ${query.type} resource with ID ${query.id}`
+                );
                 error.name = 'CRUDBlockedError';
                 error.type = 'pre';
               }
@@ -105,7 +107,9 @@ let AccessController = function (agServer, options) {
             continue;
           }
           if (this.options.blockPreByDefault) {
-            let crudBlockedError = new Error('You are not permitted to perform a CRUD operation on the ' + query.type + ' resource with ID ' + query.id + ' - No access filters found');
+            let crudBlockedError = new Error(
+              `You are not permitted to perform a CRUD operation on the ${query.type} resource with ID ${query.id} - No access filters found`
+            );
             crudBlockedError.name = 'CRUDBlockedError';
             crudBlockedError.type = 'pre';
             action.block(crudBlockedError);
@@ -189,7 +193,7 @@ let AccessController = function (agServer, options) {
             await preAccessFilter(subscribePreRequest);
           } catch (error) {
             if (typeof error === 'boolean') {
-              error = new Error('Cannot subscribe to ' + action.channel + ' channel');
+              error = new Error(`Cannot subscribe to the ${action.channel} channel`);
               error.name = 'CRUDBlockedError';
               error.type = 'pre';
             }
@@ -200,7 +204,9 @@ let AccessController = function (agServer, options) {
           continue;
         }
         if (this.options.blockPreByDefault) {
-          let crudBlockedError = new Error('Cannot subscribe to ' + action.channel + ' channel - No access filters found');
+          let crudBlockedError = new Error(
+            `Cannot subscribe to the ${action.channel} channel - No access filters found`
+          );
           crudBlockedError.name = 'CRUDBlockedError';
           crudBlockedError.type = 'pre';
           action.block(crudBlockedError);
