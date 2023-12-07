@@ -82,13 +82,13 @@ let AGCRUDRethink = function (options) {
         if (!this._foreignViews[type]) {
           this._foreignViews[type] = {};
         }
-        if (!this._foreignViews[type][viewName]) {
-          this._foreignViews[type][viewName] = {
-            paramFields,
-            affectingFields,
-            parentType: modelName
-          };
+        if (!this._foreignViews[type][modelName]) {
+          this._foreignViews[type][modelName] = {};
         }
+        this._foreignViews[type][modelName][viewName] = {
+          paramFields,
+          affectingFields
+        };
       }
     }
 
@@ -235,14 +235,7 @@ AGCRUDRethink.prototype._handleResourceChange = function (resource) {
   this.cache.clear(resource);
 };
 
-AGCRUDRethink.prototype._mapResourceField = function (fieldName, fieldValue, sourceType, targetType) {
-  if (sourceType === targetType) {
-    return {
-      success: true,
-      value: fieldValue
-    };
-  }
-
+AGCRUDRethink.prototype._mapResourceField = function (fieldName, resource, sourceType, targetType) {
   if (
     this._typeRelations[sourceType] &&
     this._typeRelations[sourceType][targetType] &&
@@ -251,7 +244,7 @@ AGCRUDRethink.prototype._mapResourceField = function (fieldName, fieldValue, sou
     let relationFn = this._typeRelations[sourceType][targetType][fieldName];
     return {
       success: true,
-      value: relationFn(fieldValue)
+      value: relationFn(resource)
     };
   }
   return {
@@ -348,13 +341,16 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     };
   })
   .concat(
-    Object.keys(foreignViewsMap).map((viewName) => {
-      let viewSchema = foreignViewsMap[viewName];
-      return {
-        name: viewName,
-        type: viewSchema.parentType,
-        schema: viewSchema
-      };
+    Object.keys(foreignViewsMap).flatMap((parentType) => {
+      let viewSchemaMap = foreignViewsMap[parentType];
+      return Object.keys(viewSchemaMap).map((viewName) => {
+        let viewSchema = viewSchemaMap[viewName];
+        return {
+          name: viewName,
+          type: parentType,
+          schema: viewSchema
+        };
+      });
     })
   );
 
@@ -368,7 +364,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     let affectingData = {};
 
     for (let fieldName of paramFields) {
-      let {success, value} = this._mapResourceField(fieldName, resource[fieldName], updateDetails.type, viewData.type);
+      let {success, value} = this._mapResourceField(fieldName, resource, updateDetails.type, viewData.type);
       if (success) {
         params[fieldName] = value;
         affectingData[fieldName] = value;
@@ -379,7 +375,7 @@ AGCRUDRethink.prototype.getAffectedViews = function (updateDetails) {
     }
 
     for (let fieldName of affectingFields) {
-      let {success, value} = this._mapResourceField(fieldName, resource[fieldName], updateDetails.type, viewData.type);
+      let {success, value} = this._mapResourceField(fieldName, resource, updateDetails.type, viewData.type);
       if (success) {
         affectingData[fieldName] = value;
       } else {
