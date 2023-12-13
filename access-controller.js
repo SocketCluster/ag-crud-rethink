@@ -273,7 +273,7 @@ AccessController.prototype.applyPostAccessFilter = async function (req) {
     };
 
     if (req.fetchResource) {
-      let pageSize = query.pageSize || this.options.defaultPageSize;
+      let pageSize = query.pageSize ?? this.options.defaultPageSize;
 
       if (!this.schema[query.type]) {
         let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);

@@ -741,7 +741,7 @@ AGCRUDRethink.prototype.read = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._read = async function (query, socket) {
-  let pageSize = query.pageSize || this.options.defaultPageSize;
+  let pageSize = query.pageSize ?? this.options.defaultPageSize;
   let modelValidator = this.modelValidators[query.type];
   if (modelValidator == null) {
     let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
