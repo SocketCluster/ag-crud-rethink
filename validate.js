@@ -326,6 +326,11 @@ let stringValidators = {
       }
       return value;
     };
+  },
+  blob: () => {
+    return (value) => {
+      return value;
+    };
   }
 };
 
@@ -391,6 +396,10 @@ class StringTypeConstraint extends TypeConstraint {
 
   uuid(...args) {
     return this.createSubConstraint('uuid', args);
+  }
+
+  blob(...args) {
+    return this.createSubConstraint('blob', []);
   }
 }
 
