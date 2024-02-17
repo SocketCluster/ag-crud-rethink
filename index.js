@@ -1095,6 +1095,15 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
 
   let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
 
+  for (let viewData of oldAffectedViewData) {
+    this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+      type: 'delete',
+      value: {
+        id: query.id
+      }
+    });
+  }
+
   if (query.field) {
     this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
       type: 'delete',
@@ -1104,15 +1113,6 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
   } else {
     let modelSchema = this.schema[query.type];
     let deletedFields = Object.keys(modelSchema?.fields || {});
-
-    for (let viewData of oldAffectedViewData) {
-      this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-        type: 'delete',
-        value: {
-          id: query.id
-        }
-      });
-    }
 
     for (let field of deletedFields) {
       this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + field, {
