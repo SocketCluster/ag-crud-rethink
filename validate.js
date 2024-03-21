@@ -241,6 +241,11 @@ let stringValidators = {
       return value;
     };
   },
+  multi: () => {
+    return (value) => {
+      return value;
+    };
+  },
   min: (arg) => {
     return (value) => {
       if (value.length < arg) {
@@ -358,6 +363,10 @@ class StringTypeConstraint extends TypeConstraint {
     return this.createSubConstraintWithValidators(newValidators, options);
   }
 
+  multi() {
+    return this.createSubConstraint('multi', [], { multi: true });
+  }
+
   min(...args) {
     return this.createSubConstraint('min', args);
   }
@@ -400,6 +409,14 @@ class StringTypeConstraint extends TypeConstraint {
 
   blob(...args) {
     return this.createSubConstraint('blob', []);
+  }
+
+  validate(value) {
+    value = super.validate(value);
+    if (typeof value === 'string' && this.options.multi) {
+      return value.split(',').map(value => value.trim());
+    }
+    return value;
   }
 }
 

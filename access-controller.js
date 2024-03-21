@@ -285,7 +285,9 @@ AccessController.prototype.applyPostAccessFilter = async function (req) {
       if (query.id) {
         try {
           request.resource = await this.cache.pass(query, async () => {
-            return this.rethink.table(query.type).get(query.id).run();
+            let resource = await this.rethink.table(query.type).get(query.id).run();
+            resource = this.options.sanitizeResourceForRead(query, resource);
+            return resource;
           });
         } catch (error) {
           this.emit('error', {error});
