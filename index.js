@@ -201,10 +201,23 @@ AGCRUDRethink.prototype.init = async function () {
     let activeIndexesSet = new Set(
       await this.rethink.table(modelName).indexList().run()
     );
+    let indexesToBuild = modelSchema.indexesToBuild || [];
+    let indexesToRebuild = [];
+    for (let indexName of indexesToBuild) {
+      if (activeIndexesSet.has(indexName)) {
+        indexesToRebuild.push(indexName);
+      }
+    }
+    await Promise.all(
+      indexesToRebuild.map(async (indexName) => {
+        await this.rethink.table(modelName).indexDrop(indexName).run();
+      })
+    );
+    let indexesToBuildSet = new Set(indexesToBuild);
     await Promise.all(
       indexes.map(async (indexData) => {
         if (typeof indexData === 'string') {
-          if (!activeIndexesSet.has(indexData)) {
+          if (!activeIndexesSet.has(indexData) || indexesToBuildSet.has(indexData)) {
             await this.rethink.table(modelName).indexCreate(indexData).run();
           }
         } else {
@@ -215,7 +228,7 @@ AGCRUDRethink.prototype.init = async function () {
               } model schema was invalid. Each index must either be a string or an object with a name property. If it is an object, it may also specify optional fn and options properties.`
             );
           }
-          if (!activeIndexesSet.has(indexData.name)) {
+          if (!activeIndexesSet.has(indexData.name) || indexesToBuildSet.has(indexData.name)) {
             if (indexData.type === 'compound') {
               await this.rethink.table(modelName).indexCreate(indexData.name, indexData.fn(this.rethink)).run();
             } else {
