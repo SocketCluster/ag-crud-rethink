@@ -146,8 +146,8 @@ let AGCRUDRethink = function (options) {
     }
   })();
 
-  this.options.sanitizeResourceForRead = (query, resource) => {
-    let modelSchema = this.schema[query.type];
+  this.options.sanitizeResourceForRead = (type, resource) => {
+    let modelSchema = this.schema[type];
     if (resource && typeof resource === 'object' && modelSchema) {
       for (let [ currentFieldName, currentFieldValue ] of Object.entries(resource)) {
         if (modelSchema.fields && modelSchema.fields[currentFieldName]?.options.multi && Array.isArray(currentFieldValue)) {
@@ -309,7 +309,7 @@ AGCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, ty
   } else {
     primaryParams = viewParams || {};
   }
-
+  primaryParams = this.options.sanitizeResourceForRead(type, primaryParams);
   let viewPrimaryParamsString = jsonStableStringify(primaryParams);
   return this.channelPrefix + viewName + '(' + viewPrimaryParamsString + '):' + type;
 };
@@ -792,7 +792,7 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
 
     data = await this.cache.pass(query, async () => {
       let resource = await this.rethink.table(query.type).get(query.id).run();
-      resource = this.options.sanitizeResourceForRead(query, resource);
+      resource = this.options.sanitizeResourceForRead(query.type, resource);
       return resource;
     });
   } else {
