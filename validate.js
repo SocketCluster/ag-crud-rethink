@@ -40,6 +40,9 @@ function validateQuery(query, schema) {
       throw new Error(`Invalid resource query - The resource id must be a string instead of ${idType}`);
     }
   }
+  if (query.sliceTo != null && typeof query.sliceTo !== 'number') {
+    throw new Error('Invalid view query - The sliceTo property must be a number');
+  }
   let viewIsSet = query.view != null;
   if (viewIsSet) {
     validateViewQuery(query, schema);

@@ -846,6 +846,9 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
         data = {};
       }
       result = data[query.field];
+      if (typeof result === 'string' && query.sliceTo != null) {
+        result = result.slice(0, query.sliceTo);
+      }
     } else {
       result = data;
     }
