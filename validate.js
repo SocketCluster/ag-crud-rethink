@@ -128,35 +128,78 @@ function validateValue(modelName, field, value, constraint) {
   }
 }
 
-function createModelValidator(modelName, modelSchemaFields) {
+function throwModelValidationError(modelName, errorList) {
+  let crudValidationError = new Error(
+    `Invalid ${modelName} record`
+  );
+  crudValidationError.name = 'CRUDValidationError';
+  crudValidationError.model = modelName;
+  crudValidationError.fieldErrors = (errorList || []).map((error) => {
+    return {
+      field: error.field,
+      message: error.message
+    };
+  });
+  throw crudValidationError;
+}
+
+function enforceErrorCountLimit(modelName, errorList, options) {
+  if (errorList.length >= options.maxErrorCount) {
+    throwModelValidationError(modelName, errorList);
+  }
+}
+
+function createModelValidator(modelName, modelSchemaFields, options) {
   return (record, allowPartial) => {
+    let errorList = [];
     let sanitizedRecord = {};
     if (allowPartial) {
       for (let [field, value] of Object.entries(record)) {
-        let constraint = modelSchemaFields[field];
-        if (constraint == null) {
+        try {
+          let constraint = modelSchemaFields[field];
+          if (constraint == null) {
+            throwFieldValidationError(
+              modelName,
+              field,
+              getUnknownFieldErrorMessage(modelName)
+            );
+          }
+          sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
+        } catch (error) {
+          errorList.push(error);
+        }
+        enforceErrorCountLimit(modelName, errorList, options);
+      }
+      if (errorList.length) {
+        throwModelValidationError(modelName, errorList);
+      }
+      return sanitizedRecord;
+    }
+    for (let field of Object.keys(record)) {
+      try {
+        if (modelSchemaFields[field] == null) {
           throwFieldValidationError(
             modelName,
             field,
             getUnknownFieldErrorMessage(modelName)
           );
         }
-        sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
+      } catch (error) {
+        errorList.push(error);
       }
-      return sanitizedRecord;
-    }
-    for (let field of Object.keys(record)) {
-      if (modelSchemaFields[field] == null) {
-        throwFieldValidationError(
-          modelName,
-          field,
-          getUnknownFieldErrorMessage(modelName)
-        );
-      }
+      enforceErrorCountLimit(modelName, errorList, options);
     }
     for (let [field, constraint] of Object.entries(modelSchemaFields)) {
-      let value = record[field];
-      sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
+      try {
+        let value = record[field];
+        sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
+      } catch (error) {
+        errorList.push(error);
+      }
+      enforceErrorCountLimit(modelName, errorList, options);
+    }
+    if (errorList.length) {
+      throwModelValidationError(modelName, errorList);
     }
     return sanitizedRecord;
   };

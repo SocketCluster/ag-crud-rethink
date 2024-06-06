@@ -21,6 +21,7 @@ let AGCRUDRethink = function (options) {
   this.schema = this.options.schema;
   this.rethink = rethinkdbdash(this.options.databaseOptions);
   this.options.rethink = this.rethink;
+  this.maxErrorCount = this.options.maxErrorCount ?? 100;
 
   this.channelPrefix = 'crud>';
 
@@ -109,7 +110,11 @@ let AGCRUDRethink = function (options) {
       }
     }
 
-    this.modelValidators[modelName] = createModelValidator(modelName, modelSchema.fields);
+    this.modelValidators[modelName] = createModelValidator(
+      modelName,
+      modelSchema.fields,
+      { maxErrorCount: this.maxErrorCount }
+    );
   }
 
   this.options.modelValidators = this.modelValidators;
