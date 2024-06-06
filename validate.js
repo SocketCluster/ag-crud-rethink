@@ -150,7 +150,7 @@ function enforceErrorCountLimit(modelName, errorList, options) {
 }
 
 function createModelValidator(modelName, modelSchemaFields, options) {
-  return (record, allowPartial) => {
+  return (record, allowPartial, throwImmediate) => {
     let errorList = [];
     let sanitizedRecord = {};
     if (allowPartial) {
@@ -166,6 +166,7 @@ function createModelValidator(modelName, modelSchemaFields, options) {
           }
           sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
         } catch (error) {
+          if (throwImmediate) throw error;
           errorList.push(error);
         }
         enforceErrorCountLimit(modelName, errorList, options);
@@ -185,6 +186,7 @@ function createModelValidator(modelName, modelSchemaFields, options) {
           );
         }
       } catch (error) {
+        if (throwImmediate) throw error;
         errorList.push(error);
       }
       enforceErrorCountLimit(modelName, errorList, options);
@@ -194,6 +196,7 @@ function createModelValidator(modelName, modelSchemaFields, options) {
         let value = record[field];
         sanitizedRecord[field] = validateValue(modelName, field, value, constraint);
       } catch (error) {
+        if (throwImmediate) throw error;
         errorList.push(error);
       }
       enforceErrorCountLimit(modelName, errorList, options);

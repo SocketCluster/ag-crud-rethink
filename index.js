@@ -939,9 +939,9 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
     let queryValue;
 
     if (query.field) {
-      queryValue = modelValidator({[query.field]: query.value}, true);
+      queryValue = modelValidator({[query.field]: query.value}, true, true);
     } else {
-      queryValue = modelValidator(query.value, true);
+      queryValue = modelValidator(query.value, true, true);
     }
 
     let result = await this._updateDb(query.type, query.id, queryValue);
@@ -1088,7 +1088,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
 
   let result;
   if (query.field) {
-    modelValidator({[query.field]: undefined}, true);
+    modelValidator({[query.field]: undefined}, true, true);
     result = await this.rethink.table(query.type).get(query.id)
       .replace(
         (row) => {
