@@ -134,12 +134,9 @@ function throwModelValidationError(modelName, errorList) {
   );
   crudValidationError.name = 'CRUDValidationError';
   crudValidationError.model = modelName;
-  crudValidationError.fieldErrors = (errorList || []).map((error) => {
-    return {
-      field: error.field,
-      message: error.message
-    };
-  });
+  crudValidationError.fieldErrors = Object.fromEntries(
+    (errorList || []).map((error) => [ error.field, error.message ])
+  );
   throw crudValidationError;
 }
 
