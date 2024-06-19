@@ -302,6 +302,11 @@ AGCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, ty
   } else {
     primaryParams = viewParams || {};
   }
+  if (!this.options.typedViewChannelParams) {
+    for (let [key, value] of Object.entries(primaryParams)) {
+      primaryParams[key] = String(value);
+    }
+  }
   let viewPrimaryParamsString = jsonStableStringify(primaryParams);
   return this.channelPrefix + viewName + '(' + viewPrimaryParamsString + '):' + type;
 };
