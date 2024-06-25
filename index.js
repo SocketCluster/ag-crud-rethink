@@ -1151,7 +1151,6 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._attachSocket = function (socket) {
-
   let actionHandlers = {
     create: async (query) => {
       return this._create(query, socket);
