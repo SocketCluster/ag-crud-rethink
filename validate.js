@@ -23,8 +23,8 @@ function validateQuery(query, schema) {
     throw new Error(`Invalid query - The query type ${query.type} was not defined on the schema`);
   }
 
-  let fieldIsSet = query.field != null;
-  let idIsSet = query.id != null;
+  let fieldIsSet = !!query.field;
+  let idIsSet = !!query.id;
   if (fieldIsSet) {
     let fieldType = typeof query.field;
     if (fieldType !== 'string') {
@@ -43,7 +43,7 @@ function validateQuery(query, schema) {
   if (query.sliceTo != null && typeof query.sliceTo !== 'number') {
     throw new Error('Invalid view query - The sliceTo property must be a number');
   }
-  let viewIsSet = query.view != null;
+  let viewIsSet = !!query.view;
   if (viewIsSet) {
     validateViewQuery(query, schema);
   }
