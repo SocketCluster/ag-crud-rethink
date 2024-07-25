@@ -450,7 +450,7 @@ class StringTypeConstraint extends TypeConstraint {
   }
 
   multi() {
-    return this.createSubConstraint('multi', []);
+    return this.createSubConstraint('multi', [], { multi: true });
   }
 
   blob() {
