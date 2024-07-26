@@ -22,12 +22,14 @@ let AGCRUDRethink = function (options) {
   this.rethink = rethinkdbdash(this.options.databaseOptions);
   this.options.rethink = this.rethink;
   this.maxErrorCount = this.options.maxErrorCount ?? 100;
+  this.maxMultiPublish = this.options.maxMultiPublish ?? 20;
 
   this.channelPrefix = 'crud>';
 
   if (!this.options.defaultPageSize) {
     this.options.defaultPageSize = 10;
   }
+  
   this._foreignViews = {};
   this._typeRelations = {};
 
@@ -317,6 +319,103 @@ AGCRUDRethink.prototype._areObjectsEqual = function (objectA, objectB) {
   return objectStringA === objectStringB;
 };
 
+AGCRUDRethink.prototype._isModelFieldMulti = function (type, field) {
+  return this.schema[type]?.fields?.[field]?.options?.multi || false;
+};
+
+AGCRUDRethink.prototype._publishToViewChannel = function (viewData, operation, otherViewData) {
+  let paramsVariants = [];
+  let params = viewData.params;
+  
+  let otherParams = otherViewData?.params || {};
+  let otherMultiParams = {};
+  for (let [field, value] of Object.entries(otherParams)) {
+    if (typeof value !== 'string') continue;
+    if (this._isModelFieldMulti(viewData.type, field)) {
+      otherMultiParams[field] = Object.fromEntries(
+        value.split(',').map(
+          (value, i) => [i, {[value.trim()]: true}]
+        )
+      );
+    }
+  }
+  if (params) {
+    paramsVariants.push(params);
+  } else {
+    params = {};
+  }
+  for (let [field, value] of Object.entries(params)) {
+    if (typeof value !== 'string') continue;
+    if (this._isModelFieldMulti(viewData.type, field)) {
+      let multiParts = value.split(',');
+      if (multiParts.length > 1) {
+        let i = 0;
+        for (let part of multiParts) {
+          let paramsClone = {...params};
+          let value = part.trim();
+          if (!otherMultiParams[field]?.[i]?.[value]) {
+            paramsClone[field] = value;
+            paramsVariants.push(paramsClone);
+          }
+          i++;
+        }
+      }
+    }
+  }
+  for (let i = 0; i < paramsVariants.length; i++) {
+    if (i > this.maxMultiPublish) break;
+    let viewParams = paramsVariants[i];
+    let viewChannelName = this._getViewChannelName(viewData.view, viewParams, viewData.type);
+    if (operation === undefined) {
+      this.publish(viewChannelName);
+    } else {
+      this.publish(viewChannelName, operation);
+    }
+  }
+};
+
+AGCRUDRethink.prototype._publishViewUpdates = async function (query, newResource, oldResource) {
+  let oldAffectedViewData = this.getQueryAffectedViews(query, oldResource);
+
+  let oldViewDataMap = {};
+  for (let viewData of oldAffectedViewData) {
+    oldViewDataMap[`${viewData.view}:${viewData.type}`] = viewData;
+  }
+
+  let newAffectedViewData = this.getQueryAffectedViews(query, newResource);
+
+  for (let viewData of newAffectedViewData) {
+    let oldViewData = oldViewDataMap[`${viewData.view}:${viewData.type}`] || {};
+    let areViewParamsEqual = this._areObjectsEqual(oldViewData.params, viewData.params);
+
+    if (areViewParamsEqual) {
+      let areAffectingDataEqual = this._areObjectsEqual(oldViewData.affectingData, viewData.affectingData);
+
+      if (!areAffectingDataEqual) {
+        this._publishToViewChannel(viewData, {
+          type: 'update',
+          value: {
+            id: query.id
+          }
+        });
+      }
+    } else {
+      this._publishToViewChannel(oldViewData, {
+        type: 'update',
+        value: {
+          id: query.id
+        }
+      }, viewData);
+      this._publishToViewChannel(viewData, {
+        type: 'update',
+        value: {
+          id: query.id
+        }
+      }, oldViewData);
+    }
+  }
+};
+
 AGCRUDRethink.prototype.getModifiedResourceFields = function (updateDetails) {
   let oldResource = updateDetails.oldResource || {};
   let newResource = updateDetails.newResource || {};
@@ -562,16 +661,7 @@ AGCRUDRethink.prototype.notifyViewUpdate = function (updateDetails, operation) {
     invalidArgumentsError.name = 'InvalidArgumentsError';
     throw invalidArgumentsError;
   }
-  let viewChannelName = this._getViewChannelName(
-    updateDetails.view,
-    updateDetails.params,
-    updateDetails.type
-  );
-  if (operation === undefined) {
-    this.publish(viewChannelName);
-  } else {
-    this.publish(viewChannelName, operation);
-  }
+  this._publishToViewChannel(updateDetails, operation);
 };
 
 /*
@@ -629,16 +719,11 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
     fields: updatedFieldsList
   });
 
-  let newViewDataMap = {};
   let newResourceAffectedViews = this.getAffectedViews({
     type: updateDetails.type,
     resource: newResource,
     fields: updatedFieldsList
   });
-
-  for (let viewData of newResourceAffectedViews) {
-    newViewDataMap[viewData.view] = viewData;
-  }
 
   for (let viewData of oldResourceAffectedViews) {
     oldViewParamsMap[viewData.view] = viewData.params;
@@ -654,7 +739,6 @@ AGCRUDRethink.prototype.notifyUpdate = function (updateDetails) {
         }
       };
     } else {
-      let newViewData = newViewDataMap[viewData.view];
       operation = {
         type: 'update',
         value: {
@@ -735,7 +819,7 @@ AGCRUDRethink.prototype._create = async function (query, socket) {
 
     let affectedViewData = this.getQueryAffectedViews(query, result);
     for (let viewData of affectedViewData) {
-      this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
+      this._publishToViewChannel(viewData, {
         type: 'create',
         value: {
           id: result.id
@@ -928,7 +1012,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
       modelInstance = await this.rethink.table(query.type).get(query.id).run();
     }
 
-    let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
+    let modelInstanceClone = {...modelInstance};
 
     let accessFilterRequest = {
       r: this.rethink,
@@ -992,44 +1076,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
         }
       }
     }
-
-    let oldViewDataMap = {};
-    for (let viewData of oldAffectedViewData) {
-      oldViewDataMap[`${viewData.view}:${viewData.type}`] = viewData;
-    }
-
-    let newAffectedViewData = this.getQueryAffectedViews(query, result);
-
-    for (let viewData of newAffectedViewData) {
-      let oldViewData = oldViewDataMap[`${viewData.view}:${viewData.type}`] || {};
-      let areViewParamsEqual = this._areObjectsEqual(oldViewData.params, viewData.params);
-
-      if (areViewParamsEqual) {
-        let areAffectingDataEqual = this._areObjectsEqual(oldViewData.affectingData, viewData.affectingData);
-
-        if (!areAffectingDataEqual) {
-          this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-            type: 'update',
-            value: {
-              id: query.id
-            }
-          });
-        }
-      } else {
-        this.publish(this._getViewChannelName(oldViewData.view, oldViewData.params, oldViewData.type), {
-          type: 'update',
-          value: {
-            id: query.id
-          }
-        });
-        this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-          type: 'update',
-          value: {
-            id: query.id
-          }
-        });
-      }
-    }
+    this._publishViewUpdates(query, result, modelInstanceClone);
     this.emit('update', {query, result});
 
   } catch (error) {
@@ -1078,7 +1125,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
   }
 
   let modelInstance = await this.rethink.table(query.type).get(query.id).run();
-  let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstance);
+  let modelInstanceClone = {...modelInstance};
 
   let accessFilterRequest = {
     r: this.rethink,
@@ -1120,22 +1167,24 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
 
   let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
 
-  for (let viewData of oldAffectedViewData) {
-    this.publish(this._getViewChannelName(viewData.view, viewData.params, viewData.type), {
-      type: 'delete',
-      value: {
-        id: query.id
-      }
-    });
-  }
-
   if (query.field) {
+    this._publishViewUpdates(query, result, modelInstanceClone);
     this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
       type: 'delete',
       publisherSocketId: socket && socket.id,
       publisherId
     });
   } else {
+    let oldAffectedViewData = this.getQueryAffectedViews(query, modelInstanceClone);
+    for (let viewData of oldAffectedViewData) {
+      this._publishToViewChannel(viewData, {
+        type: 'delete',
+        value: {
+          id: query.id
+        }
+      });
+    }
+
     let modelSchema = this.schema[query.type];
     let deletedFields = Object.keys(modelSchema?.fields || {});
 
