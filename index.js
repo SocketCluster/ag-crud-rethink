@@ -405,7 +405,7 @@ AGCRUDRethink.prototype._publishViewUpdates = async function (query, newResource
         value: {
           id: query.id
         }
-      }, viewData);
+      });
       this._publishToViewChannel(viewData, {
         type: 'update',
         value: {
