@@ -1,3 +1,6 @@
+const PUBLISHER_ID_MIN_LENGTH = 1;
+const PUBLISHER_ID_MAX_LENGTH = 50;
+
 function validateQuery(query, schema) {
   if (query == null) {
     throw new Error('Invalid query - The query was null or undefined');
@@ -21,6 +24,21 @@ function validateQuery(query, schema) {
   }
   if (!schema[query.type]) {
     throw new Error(`Invalid query - The query type ${query.type} was not defined on the schema`);
+  }
+  if (query.publisherId != null) {
+    if (
+      typeof query.publisherId !== 'string' ||
+      query.publisherId.length > PUBLISHER_ID_MAX_LENGTH ||
+      query.publisherId.length < PUBLISHER_ID_MIN_LENGTH
+    ) {
+      throw new Error(
+        `Invalid query - The optional publisherId property must be a string between ${
+          PUBLISHER_ID_MIN_LENGTH
+        } and ${
+          PUBLISHER_ID_MAX_LENGTH
+        } characters in length`
+      );
+    }
   }
 
   let fieldIsSet = !!query.field;
