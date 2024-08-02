@@ -324,6 +324,8 @@ AGCRUDRethink.prototype._isModelFieldMulti = function (type, field) {
 };
 
 AGCRUDRethink.prototype._publishToViewChannel = function (viewData, operation, otherViewData) {
+  let viewSchema = this._getView(viewData.type, viewData.view);
+  if (!viewSchema || viewSchema.disableRealtime) return;
   let paramsVariants = [];
   let params = viewData.params;
   
