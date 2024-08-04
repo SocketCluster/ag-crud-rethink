@@ -347,6 +347,11 @@ AGCRUDRethink.prototype._publishToViewChannel = function (viewData, operation, o
     params = {};
   }
   for (let [field, value] of Object.entries(params)) {
+    if (value == null) {
+      let paramsClone = {...params};
+      paramsClone[field] = 'false';
+      paramsVariants.push(paramsClone);
+    }
     if (typeof value !== 'string') continue;
     if (this._isModelFieldMulti(viewData.type, field)) {
       let multiParts = value.split(',');
