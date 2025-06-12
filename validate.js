@@ -51,6 +51,11 @@ function validateQuery(query, schema) {
     if (!idIsSet) {
       throw new Error('Invalid field query - The query must have an id property');
     }
+  } else if (
+    (query.action === 'create' || query.action === 'update') &&
+    (typeof query.value !== 'object' || query.value == null)
+  ) {
+    throw new Error('Invalid query - The query value must be an object if the field is not set');
   }
   if (idIsSet) {
     let idType = typeof query.id;
