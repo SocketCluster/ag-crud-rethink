@@ -1,7 +1,7 @@
-const {constructTransformedRethinkQuery} = require('./query-transformer');
-const {parseChannelResourceQuery} = require('./channel-resource-parser');
+const { constructTransformedRethinkQuery } = require('./query-transformer');
+const { parseChannelResourceQuery } = require('./channel-resource-parser');
 const AsyncStreamEmitter = require('async-stream-emitter');
-const {validateQuery} = require('./validate');
+const { validateQuery } = require('./validate');
 
 let AccessController = function (agServer, options) {
   AsyncStreamEmitter.call(this);

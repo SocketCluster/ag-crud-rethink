@@ -4,8 +4,8 @@ const Cache = require('./cache');
 const AsyncStreamEmitter = require('async-stream-emitter');
 const WritableConsumableStream = require('writable-consumable-stream');
 const jsonStableStringify = require('json-stable-stringify');
-const {constructTransformedRethinkQuery} = require('./query-transformer');
-const {validateQuery, createModelValidator, typeBuilder} = require('./validate');
+const { constructTransformedRethinkQuery } = require('./query-transformer');
+const { validateQuery, createModelValidator, typeBuilder } = require('./validate');
 const errors = require('./errors');
 
 let AGCRUDRethink = function (options) {
