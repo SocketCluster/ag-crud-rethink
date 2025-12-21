@@ -259,6 +259,22 @@ let AccessController = function (agServer, options) {
 
 AccessController.prototype = Object.create(AsyncStreamEmitter.prototype);
 
+AccessController.prototype.applyPreAccessFilter = async function (req) {
+  let authToken = req.socket?.authToken;
+  let {query} = req;
+  let preAccessFilter = this._getModelAccessFilter(query.type, 'pre');
+  if (preAccessFilter) {
+    let crudRequest = {
+      r: this.rethink,
+      socket: req.socket,
+      action: query.action,
+      authToken,
+      query
+    };
+    await preAccessFilter(crudRequest);
+  }
+};
+
 AccessController.prototype.applyPostAccessFilter = async function (req) {
   let {query} = req;
   let postAccessFilter = this._getModelAccessFilter(query.type, 'post');
