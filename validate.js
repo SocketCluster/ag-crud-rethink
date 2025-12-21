@@ -92,7 +92,7 @@ function validateViewQuery(query, schema) {
   let viewSchema = schema[query.type].views[query.view];
   let hasPrimaryKeys = viewSchema.primaryFields && viewSchema.primaryFields.length > 0;
   if (hasPrimaryKeys || (viewSchema.paramFields && viewSchema.paramFields.length > 0)) {
-    validateRequiredViewParams(query.viewParams);
+    validateRequiredViewParams(query);
   }
   if (hasPrimaryKeys) {
     let missingFields = [];
@@ -115,7 +115,8 @@ function validateViewQuery(query, schema) {
   }
 }
 
-function validateRequiredViewParams(viewParams) {
+function validateRequiredViewParams(query) {
+  let {viewParams} = query;
   if (viewParams == null) {
     throw new Error(`Invalid view query - The view ${query.view} under the type ${query.type} expects viewParams but it was null or undefined`);
   }
