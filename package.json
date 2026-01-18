@@ -13,8 +13,7 @@
   "dependencies": {
     "async-stream-emitter": "^7.0.1",
     "json-stable-stringify": "1.0.1",
-    "rethinkdbdash": "^2.3.31",
-    "writable-consumable-stream": "^4.1.0"
+    "rethinkdbdash": "^2.3.31"
   },
   "keywords": [
     "socketcluster",
