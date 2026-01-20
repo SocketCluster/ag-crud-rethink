@@ -1083,7 +1083,7 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
       }
     }
     this._publishViewUpdates(query, result, modelInstanceClone);
-    this.emit('update', {query, result});
+    this.emit('update', {query, result, original: modelInstanceClone});
 
   } catch (error) {
     this.emit('error', {error});
@@ -1144,6 +1144,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
 
   await applyPostAccessFilter(accessFilterRequest);
 
+  let original;
   let result;
   if (query.field) {
     modelValidator({[query.field]: undefined}, true, true);
@@ -1158,6 +1159,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
     if (result.errors) {
       throw errors.create(result.first_error);
     }
+    original = result.changes.length ? result.changes[0].old_val : {};
     result = result.changes.length ? result.changes[0].new_val : {};
   } else {
     result = await this.rethink.table(query.type)
@@ -1165,6 +1167,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
     if (result.errors) {
       throw errors.create(result.first_error);
     }
+    original = result.changes.length ? result.changes[0].old_val : {};
     result = result.changes.length ? result.changes[0].new_val : {};
   }
 
@@ -1202,7 +1205,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       });
     }
   }
-  this.emit('delete', {query, result});
+  this.emit('delete', {query, result, original});
 };
 
 AGCRUDRethink.prototype._attachSocket = function (socket) {
