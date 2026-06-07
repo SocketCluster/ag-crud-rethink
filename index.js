@@ -956,6 +956,9 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
       result.isLastPage = true;
     }
   }
+
+  this.emit('read', {query, result});
+
   // Return null instead of undefined - That way the frontend will know
   // that the value was read but didn't exist (or was null).
   if (result === undefined) {
