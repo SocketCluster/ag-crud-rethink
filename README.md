@@ -22,3 +22,11 @@ need to declare what fields are allowed and optionally the **views** which are s
 
 Simply put, a **view** is an ordered, filtered subset of all documents within a table. Views need to define a ```filter``` and/or ```order``` function
 which will be used to construct the view for table's data.
+
+## Options
+
+- `schemaSettlementDelay` (Default: `5000`) - When multiple workers start up at the same time, RethinkDB may end up
+creating more than one database or table with the same name. After creating a database or table, this module waits
+this many milliseconds to allow concurrent workers to finish their own creations, then drops any duplicates - keeping
+the copy with the smallest `id` so that all workers converge on the same one. The delay is only incurred when this
+worker actually created a database or table.

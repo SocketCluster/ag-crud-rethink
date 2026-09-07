@@ -22,6 +22,10 @@ let AGCRUDRethink = function (options) {
   this.options.rethink = this.rethink;
   this.maxErrorCount = this.options.maxErrorCount ?? 100;
   this.maxMultiPublish = this.options.maxMultiPublish ?? 20;
+  // The amount of time to wait after creating a database or table before
+  // checking for (and cleaning up) duplicates which may have been created
+  // concurrently by other workers.
+  this.schemaSettlementDelay = this.options.schemaSettlementDelay ?? 3000;
 
   this.channelPrefix = 'crud>';
 
@@ -180,16 +184,173 @@ let AGCRUDRethink = function (options) {
 
 AGCRUDRethink.prototype = Object.create(AsyncStreamEmitter.prototype);
 
-AGCRUDRethink.prototype.init = async function () {
-  let databases = await this.rethink.dbList().run();
-  if (!databases.includes(this.options.databaseOptions.db)) {
-    await this.rethink.dbCreate(this.options.databaseOptions.db).run();
-  }
-  let tables = await this.rethink.tableList().run();
-  for (let modelName of Object.keys(this.schema)) {
-    if (!tables.includes(modelName)) {
-      await this.rethink.tableCreate(modelName).run();
+AGCRUDRethink.prototype._wait = function (duration) {
+  return new Promise((resolve) => setTimeout(resolve, duration));
+};
+
+AGCRUDRethink.prototype._isAlreadyExistsError = function (error) {
+  return !!error && typeof error.message === 'string' && /already exists/i.test(error.message);
+};
+
+AGCRUDRethink.prototype._getErrorMessage = function (error) {
+  if (!error) return '';
+  if (typeof error.msg === 'string') return error.msg;
+  if (typeof error.message === 'string') return error.message;
+  return '';
+};
+
+// These messages are matched against the index name specifically; RethinkDB
+// uses the same ReqlOpFailedError type for unrelated failures.
+AGCRUDRethink.prototype._isIndexAlreadyExistsError = function (error) {
+  return /^Index `[^`]*` already exists/i.test(this._getErrorMessage(error));
+};
+
+AGCRUDRethink.prototype._isIndexDoesNotExistError = function (error) {
+  return /^Index `[^`]*` does not exist/i.test(this._getErrorMessage(error));
+};
+
+// If a concurrent worker created the index first, then the desired state has
+// already been reached so the error can be ignored.
+AGCRUDRethink.prototype._createIndex = async function (modelName, ...indexArgs) {
+  try {
+    await this.rethink.table(modelName).indexCreate(...indexArgs).run();
+  } catch (error) {
+    if (!this._isIndexAlreadyExistsError(error)) {
+      throw error;
     }
+  }
+};
+
+// If a concurrent worker dropped the index first, then the desired state has
+// already been reached so the error can be ignored.
+AGCRUDRethink.prototype._dropIndex = async function (modelName, indexName) {
+  try {
+    await this.rethink.table(modelName).indexDrop(indexName).run();
+  } catch (error) {
+    if (!this._isIndexDoesNotExistError(error)) {
+      throw error;
+    }
+  }
+};
+
+// Returns all of the entries of the specified RethinkDB system config table
+// (e.g. db_config or table_config) which match the specified filter, grouped
+// by their name property.
+AGCRUDRethink.prototype._getSchemaEntriesByName = async function (configTableName, filter) {
+  let entries = await this.rethink.db('rethinkdb').table(configTableName).filter(filter).run();
+  let entriesByName = {};
+  for (let entry of entries) {
+    if (!entriesByName[entry.name]) {
+      entriesByName[entry.name] = [];
+    }
+    entriesByName[entry.name].push(entry);
+  }
+  for (let name of Object.keys(entriesByName)) {
+    // Sorting by id guarantees that every worker agrees on which entry to keep.
+    entriesByName[name].sort((entryA, entryB) => {
+      if (entryA.id > entryB.id) return 1;
+      if (entryA.id < entryB.id) return -1;
+      return 0;
+    });
+  }
+  return entriesByName;
+};
+
+// Removes duplicate databases or tables (as can happen when multiple workers
+// create the same database or table concurrently). The entry with the smallest
+// id is kept and all others are dropped.
+AGCRUDRethink.prototype._dropDuplicateSchemaEntries = async function (configTableName, filter, nameSet) {
+  let entriesByName = await this._getSchemaEntriesByName(configTableName, filter);
+  let duplicates = [];
+  for (let name of Object.keys(entriesByName)) {
+    if (nameSet && !nameSet.has(name)) continue;
+    duplicates = duplicates.concat(entriesByName[name].slice(1));
+  }
+  for (let duplicate of duplicates) {
+    // Deleting a row which another worker has already deleted is not an error;
+    // RethinkDB reports it as skipped. Some write failures are reported in the
+    // result rather than thrown, so check for them explicitly.
+    let result = await this.rethink.db('rethinkdb').table(configTableName).get(duplicate.id).delete().run();
+    if (result && result.errors) {
+      throw new Error(
+        `Failed to drop the duplicate ${configTableName} entry with id ${
+          duplicate.id
+        } because of error: ${result.first_error}`
+      );
+    }
+  }
+  return duplicates;
+};
+
+// Creates the database if it does not already exist and then makes sure that
+// only a single database with that name remains.
+AGCRUDRethink.prototype._createDatabase = async function (dbName) {
+  let databases = await this.rethink.dbList().run();
+  let created = false;
+  if (!databases.includes(dbName)) {
+    try {
+      await this.rethink.dbCreate(dbName).run();
+      created = true;
+    } catch (error) {
+      if (!this._isAlreadyExistsError(error)) {
+        throw error;
+      }
+      // Another worker created the database at the same time; it may have
+      // created a duplicate so the settlement/cleanup below still applies.
+      created = true;
+    }
+  }
+  if (created) {
+    // Give any concurrent workers enough time to finish creating their own
+    // copies of the database before deciding which one to keep.
+    await this._wait(this.schemaSettlementDelay);
+  }
+  let duplicates = await this._dropDuplicateSchemaEntries('db_config', {name: dbName});
+  for (let duplicate of duplicates) {
+    this.emit('duplicateSchemaEntry', {type: 'database', name: dbName, id: duplicate.id});
+  }
+};
+
+// Creates any of the specified tables which do not already exist and then makes
+// sure that only a single table with each name remains within the database.
+AGCRUDRethink.prototype._createTables = async function (dbName, tableNames) {
+  let existingTables = await this.rethink.db(dbName).tableList().run();
+  let existingTablesSet = new Set(existingTables);
+  let missingTableNames = tableNames.filter((tableName) => !existingTablesSet.has(tableName));
+  await Promise.all(
+    missingTableNames.map(async (tableName) => {
+      try {
+        await this.rethink.db(dbName).tableCreate(tableName).run();
+      } catch (error) {
+        if (!this._isAlreadyExistsError(error)) {
+          throw error;
+        }
+      }
+    })
+  );
+  // Whether this worker created the tables or lost the race to another worker,
+  // duplicates may exist so the settlement/cleanup below applies either way.
+  if (missingTableNames.length) {
+    // Give any concurrent workers enough time to finish creating their own
+    // copies of the tables before deciding which ones to keep.
+    await this._wait(this.schemaSettlementDelay);
+  }
+  let duplicates = await this._dropDuplicateSchemaEntries(
+    'table_config',
+    (table) => table('db').eq(dbName),
+    new Set(tableNames)
+  );
+  for (let duplicate of duplicates) {
+    this.emit('duplicateSchemaEntry', {type: 'table', name: duplicate.name, id: duplicate.id});
+  }
+};
+
+AGCRUDRethink.prototype.init = async function () {
+  let dbName = this.options.databaseOptions.db;
+  await this._createDatabase(dbName);
+  await this._createTables(dbName, Object.keys(this.schema));
+  // Each model only touches its own table, so they can be set up in parallel.
+  await Promise.all(Object.keys(this.schema).map(async (modelName) => {
     let modelSchema = this.schema[modelName];
     let indexes = modelSchema.indexes || [];
     let activeIndexesSet = new Set(
@@ -204,7 +365,7 @@ AGCRUDRethink.prototype.init = async function () {
     }
     await Promise.all(
       indexesToRebuild.map(async (indexName) => {
-        await this.rethink.table(modelName).indexDrop(indexName).run();
+        await this._dropIndex(modelName, indexName);
       })
     );
     let indexesToBuildSet = new Set(indexesToBuild);
@@ -212,7 +373,7 @@ AGCRUDRethink.prototype.init = async function () {
       indexes.map(async (indexData) => {
         if (typeof indexData === 'string') {
           if (!activeIndexesSet.has(indexData) || indexesToBuildSet.has(indexData)) {
-            await this.rethink.table(modelName).indexCreate(indexData).run();
+            await this._createIndex(modelName, indexData);
           }
         } else {
           if (!indexData.name) {
@@ -224,15 +385,15 @@ AGCRUDRethink.prototype.init = async function () {
           }
           if (!activeIndexesSet.has(indexData.name) || indexesToBuildSet.has(indexData.name)) {
             if (indexData.type === 'compound') {
-              await this.rethink.table(modelName).indexCreate(indexData.name, indexData.fn(this.rethink)).run();
+              await this._createIndex(modelName, indexData.name, indexData.fn(this.rethink));
             } else {
-              await this.rethink.table(modelName).indexCreate(indexData.name, indexData.fn, indexData.options).run();
+              await this._createIndex(modelName, indexData.name, indexData.fn, indexData.options);
             }
           }
         }
       })
     );
-  }
+  }));
 };
 
 AGCRUDRethink.prototype._getResourceChannelName = function (resource) {
