@@ -263,7 +263,7 @@ class TypeConstraint {
       return value;
     }
     for (let validator of Object.values(this.validators)) {
-      value = validator(value);
+      value = validator.call(this, value);
     }
     return value;
   }
@@ -312,24 +312,33 @@ let stringValidators = {
     };
   },
   min: (arg) => {
-    return (value) => {
+    return function (value) {
       if (value.length < arg) {
+        if (this.options.blob) {
+          throw new Error(`Value must be at least ${arg} byte${arg === 1 ? '' : 's'} in size`);
+        }
         throw new Error(`Value must be at least ${arg} character${arg === 1 ? '' : 's'} in length`);
       }
       return value;
     };
   },
   max: (arg) => {
-    return (value) => {
+    return function (value) {
       if (value.length > arg) {
+        if (this.options.blob) {
+          throw new Error(`Value cannot exceed ${arg} byte${arg === 1 ? '' : 's'} in size`);
+        }
         throw new Error(`Value cannot exceed ${arg} character${arg === 1 ? '' : 's'} in length`);
       }
       return value;
     };
   },
   length: (arg) => {
-    return (value) => {
+    return function (value) {
       if (value.length !== arg) {
+        if (this.options.blob) {
+          throw new Error(`Value must be exactly ${arg} byte${arg === 1 ? '' : 's'} in size`);
+        }
         throw new Error(`Value must be ${arg} character${arg === 1 ? '' : 's'} long`);
       }
       return value;
@@ -478,7 +487,7 @@ class StringTypeConstraint extends TypeConstraint {
   }
 
   blob() {
-    return this.createSubConstraint('blob', []);
+    return this.createSubConstraint('blob', [], { blob: true });
   }
 }
 
