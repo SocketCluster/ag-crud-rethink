@@ -66,11 +66,25 @@ let AccessController = function (agServer, options) {
             continue;
           }
 
-          if (query.action === 'read' && query.view && typeof query.pageSize === 'number') {
+          let isCollectionRead = query.action === 'read' && !query.id;
+
+          if (isCollectionRead && !query.view && this.options.requireViewForCollectionRead) {
+            let error = new Error(
+              `You are not permitted to read the ${query.type} collection without specifying a view`
+            );
+            error.name = 'CRUDBlockedError';
+            error.type = 'pre';
+            action.block(error);
+            continue;
+          }
+
+          // The maxPageSize applies to every collection read, with or without a view.
+          if (isCollectionRead && typeof query.pageSize === 'number') {
             let {maxPageSize} = this._getComputedModelSchema(query.type);
             if (maxPageSize != null && query.pageSize > maxPageSize) {
+              let target = query.view ? `the ${query.view} view of the ${query.type} model` : `the ${query.type} collection`;
               let error = new Error(
-                `You are not permitted to access the ${query.view} view of the ${query.type} model - Query pageSize exceeded the maxPageSize of ${maxPageSize}`
+                `You are not permitted to access ${target} - Query pageSize exceeded the maxPageSize of ${maxPageSize}`
               );
               error.name = 'CRUDBlockedError';
               error.type = 'pre';
