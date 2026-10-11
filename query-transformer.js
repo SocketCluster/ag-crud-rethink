@@ -1,7 +1,8 @@
+const { getOwnProperty } = require('./validate');
+
 let getViewMetaData = function (options, type, viewName) {
-  let typeSchema = options.schema[type] || {};
-  let modelViews = typeSchema.views || {};
-  let viewSchema = modelViews[viewName] || {};
+  let typeSchema = getOwnProperty(options.schema, type) || {};
+  let viewSchema = getOwnProperty(typeSchema.views, viewName) || {};
 
   return Object.assign({}, viewSchema);
 };

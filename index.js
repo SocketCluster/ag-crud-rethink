@@ -4,7 +4,7 @@ const Cache = require('./cache');
 const AsyncStreamEmitter = require('async-stream-emitter');
 const jsonStableStringify = require('json-stable-stringify');
 const { constructTransformedRethinkQuery } = require('./query-transformer');
-const { validateQuery, createModelValidator, typeBuilder } = require('./validate');
+const { validateQuery, getOwnProperty, createModelValidator, typeBuilder } = require('./validate');
 const errors = require('./errors');
 
 let AGCRUDRethink = function (options) {
@@ -433,11 +433,11 @@ AGCRUDRethink.prototype._mapResourceField = function (fieldName, resource, sourc
 };
 
 AGCRUDRethink.prototype._getForeignViews = function (type) {
-  return this._foreignViews[type] || {};
+  return getOwnProperty(this._foreignViews, type) || {};
 };
 
 AGCRUDRethink.prototype._getViews = function (type) {
-  let typeSchema = this.schema[type] || {};
+  let typeSchema = getOwnProperty(this.schema, type) || {};
   return typeSchema.views || {};
 };
 
@@ -448,7 +448,7 @@ AGCRUDRethink.prototype._isValidView = function (type, viewName) {
 
 AGCRUDRethink.prototype._getView = function (type, viewName) {
   let modelViews = this._getViews(type);
-  return modelViews[viewName];
+  return getOwnProperty(modelViews, viewName);
 };
 
 AGCRUDRethink.prototype._getViewChannelName = function (viewName, viewParams, type) {
@@ -480,7 +480,8 @@ AGCRUDRethink.prototype._areObjectsEqual = function (objectA, objectB) {
 };
 
 AGCRUDRethink.prototype._isModelFieldMulti = function (type, field) {
-  return this.schema[type]?.fields?.[field]?.options?.multi || false;
+  let fieldSchema = getOwnProperty(getOwnProperty(this.schema, type)?.fields, field);
+  return fieldSchema?.options?.multi || false;
 };
 
 AGCRUDRethink.prototype._publishToViewChannel = function (viewData, operation, otherViewData) {
@@ -956,7 +957,7 @@ AGCRUDRethink.prototype.create = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._create = async function (query, socket) {
-  let modelValidator = this.modelValidators[query.type];
+  let modelValidator = getOwnProperty(this.modelValidators, query.type);
 
   try {
     if (modelValidator == null) {
@@ -1015,7 +1016,7 @@ AGCRUDRethink.prototype.read = async function (query, socket) {
 
 AGCRUDRethink.prototype._read = async function (query, socket) {
   let pageSize = query.pageSize ?? this.options.defaultPageSize;
-  let modelValidator = this.modelValidators[query.type];
+  let modelValidator = getOwnProperty(this.modelValidators, query.type);
   if (modelValidator == null) {
     let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
     error.name = 'CRUDInvalidModelType';
@@ -1141,7 +1142,7 @@ AGCRUDRethink.prototype.update = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._update = async function (query, socket) {
-  let modelValidator = this.modelValidators[query.type];
+  let modelValidator = getOwnProperty(this.modelValidators, query.type);
 
   try {
     if (modelValidator == null) {
@@ -1204,7 +1205,22 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
     }
 
     let result = await this._updateDb(query.type, query.id, queryValue);
-    this.cache.update(query);
+    // Update the cache with the sanitized value. For a field update, queryValue is
+    // already shaped as {[query.field]: value} so nested objects stay under their field.
+    // RethinkDB expressions (e.g. r.now()) are functions whose result is only known to
+    // the database, so in that case the cache entry is cleared instead of patched.
+    let hasComputedValue = Object.values(queryValue || {}).some(
+      (value) => typeof value === 'function'
+    );
+    if (hasComputedValue) {
+      this.cache.clear(query);
+    } else {
+      this.cache.update({
+        type: query.type,
+        id: query.id,
+        value: queryValue
+      });
+    }
 
     let resourceChannelName = this._getResourceChannelName(query);
     this.publish(resourceChannelName);
@@ -1265,7 +1281,7 @@ AGCRUDRethink.prototype.delete = async function (query, socket) {
 };
 
 AGCRUDRethink.prototype._delete = async function (query, socket) {
-  let modelValidator = this.modelValidators[query.type];
+  let modelValidator = getOwnProperty(this.modelValidators, query.type);
 
   try {
     if (modelValidator == null) {
@@ -1358,7 +1374,7 @@ AGCRUDRethink.prototype._delete = async function (query, socket) {
       });
     }
 
-    let modelSchema = this.schema[query.type];
+    let modelSchema = getOwnProperty(this.schema, query.type);
     let deletedFields = Object.keys(modelSchema?.fields || {});
 
     for (let field of deletedFields) {
@@ -1395,7 +1411,13 @@ AGCRUDRethink.prototype._attachSocket = function (socket) {
       let {action, ...query} = request?.data || {};
       let result;
       try {
-        result = await actionHandlers[action](query);
+        let actionHandler = getOwnProperty(actionHandlers, action);
+        if (!actionHandler) {
+          let error = new Error(`Invalid CRUD action ${action}`);
+          error.name = 'CRUDInvalidOperation';
+          throw error;
+        }
+        result = await actionHandler(query);
       } catch (error) {
         request.error(
           this.clientErrorMapper(error, action, query)

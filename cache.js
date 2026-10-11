@@ -181,14 +181,12 @@ Cache.prototype.update = function (query) {
   if (resourcePath) {
     let cacheEntry = this.get(query, resourcePath);
     if (cacheEntry) {
-      if (cacheEntry.pending) {
-        for (let [field, value] of Object.entries(query.value)) {
-          cacheEntry.patch[field] = value;
-        }
-      } else {
-        for (let [field, value] of Object.entries(query.value)) {
-          cacheEntry.resource[field] = value;
-        }
+      let target = cacheEntry.pending ? cacheEntry.patch : cacheEntry.resource;
+      if (!target || typeof target !== 'object') return;
+      for (let [field, value] of Object.entries(query.value)) {
+        // Assigning to __proto__ would replace the cached object's prototype.
+        if (field === '__proto__') continue;
+        target[field] = value;
       }
       this.emit('update', {
         query,

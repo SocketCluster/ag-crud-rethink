@@ -1,6 +1,15 @@
 const PUBLISHER_ID_MIN_LENGTH = 1;
 const PUBLISHER_ID_MAX_LENGTH = 50;
 
+// Looks up a key on a plain lookup object (schema, views, fields...) without
+// falling through to Object.prototype (e.g. 'constructor', '__proto__', 'toString').
+function getOwnProperty(object, key) {
+  if (object == null || typeof key !== 'string' || !Object.hasOwn(object, key)) {
+    return undefined;
+  }
+  return object[key];
+}
+
 function validateQuery(query, schema) {
   if (query == null) {
     throw new Error('Invalid query - The query was null or undefined');
@@ -22,7 +31,7 @@ function validateQuery(query, schema) {
   if (typeof query.type !== 'string') {
     throw new Error('Invalid query - The query type must be a string');
   }
-  if (!schema[query.type]) {
+  if (!getOwnProperty(schema, query.type)) {
     throw new Error(`Invalid query - The query type ${query.type} was not defined on the schema`);
   }
   if (query.publisherId != null) {
@@ -86,10 +95,10 @@ function validateViewQuery(query, schema) {
   if (viewType !== 'string') {
     throw new Error(`Invalid view query - The view property must be a string instead of ${viewType}`);
   }
-  if (!schema[query.type].views || !schema[query.type].views[query.view]) {
+  let viewSchema = getOwnProperty(getOwnProperty(schema, query.type).views, query.view);
+  if (!viewSchema) {
     throw new Error(`Invalid view query - The view ${query.view} was not defined in the schema under the type ${query.type}`);
   }
-  let viewSchema = schema[query.type].views[query.view];
   let hasPrimaryKeys = viewSchema.primaryFields && viewSchema.primaryFields.length > 0;
   if (hasPrimaryKeys || (viewSchema.paramFields && viewSchema.paramFields.length > 0)) {
     validateRequiredViewParams(query);
@@ -177,7 +186,7 @@ function createModelValidator(modelName, modelSchemaFields, options) {
     if (allowPartial) {
       for (let [field, value] of Object.entries(record)) {
         try {
-          let constraint = modelSchemaFields[field];
+          let constraint = getOwnProperty(modelSchemaFields, field);
           if (constraint == null) {
             throwFieldValidationError(
               modelName,
@@ -199,7 +208,7 @@ function createModelValidator(modelName, modelSchemaFields, options) {
     }
     for (let field of Object.keys(record)) {
       try {
-        if (modelSchemaFields[field] == null) {
+        if (getOwnProperty(modelSchemaFields, field) == null) {
           throwFieldValidationError(
             modelName,
             field,
@@ -627,6 +636,7 @@ let typeBuilder = {
 
 module.exports = {
   validateQuery,
+  getOwnProperty,
   createModelValidator,
   typeBuilder
 };

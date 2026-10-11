@@ -1,7 +1,7 @@
 const { constructTransformedRethinkQuery } = require('./query-transformer');
 const { parseChannelResourceQuery } = require('./channel-resource-parser');
 const AsyncStreamEmitter = require('async-stream-emitter');
-const { validateQuery } = require('./validate');
+const { validateQuery, getOwnProperty } = require('./validate');
 
 let AccessController = function (agServer, options) {
   AsyncStreamEmitter.call(this);
@@ -17,7 +17,7 @@ let AccessController = function (agServer, options) {
     if (modelType == null || typeof modelType !== 'string') {
       return null;
     }
-    let modelSchema = this.schema[modelType];
+    let modelSchema = getOwnProperty(this.schema, modelType);
     if (!modelSchema) {
       return null;
     }
@@ -31,7 +31,7 @@ let AccessController = function (agServer, options) {
   this._getComputedModelSchema = (type) => {
     return {
       maxPageSize: this.maxPageSize,
-      ...this.schema[type]
+      ...getOwnProperty(this.schema, type)
     };
   };
 
@@ -291,7 +291,7 @@ AccessController.prototype.applyPostAccessFilter = async function (req) {
     if (req.fetchResource) {
       let pageSize = query.pageSize ?? this.options.defaultPageSize;
 
-      if (!this.schema[query.type]) {
+      if (!getOwnProperty(this.schema, query.type)) {
         let error = new Error(`The ${query.type} model type is not supported - It is not part of the schema`);
         error.name = 'CRUDInvalidModelType';
         this.emit('error', {error});
