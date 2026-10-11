@@ -405,6 +405,7 @@ AGCRUDRethink.prototype._getResourcePropertyChannelName = function (resourceProp
 };
 
 AGCRUDRethink.prototype._cleanupResourceChannel = function (resource) {
+  if (!this.agServer) return;
   let resourceChannelName = this._getResourceChannelName(resource);
   let resourceChannel = this.agServer.exchange.channel(resourceChannelName);
   resourceChannel.unsubscribe();
@@ -1027,8 +1028,14 @@ AGCRUDRethink.prototype._read = async function (query, socket) {
   let count;
 
   if (query.id) {
+    // The resource channel subscription only exists to invalidate the cache entry.
+    // It is cleaned up when the cache entry expires or is cleared, so it must not be
+    // created when the cache is disabled; otherwise every distinct id would leave a
+    // subscription behind.
+    let shouldWatchResource = !this.cache.cacheDisabled && !!this.agServer;
     let resourceChannelName = this._getResourceChannelName(query);
-    let isSubscribedToResourceChannel = this.agServer.exchange.isSubscribed(resourceChannelName, true);
+    let isSubscribedToResourceChannel = !shouldWatchResource ||
+      this.agServer.exchange.isSubscribed(resourceChannelName, true);
 
     if (!isSubscribedToResourceChannel) {
       let resourceChannel = this.agServer.exchange.subscribe(resourceChannelName);
