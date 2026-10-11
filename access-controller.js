@@ -1,6 +1,7 @@
 const { constructTransformedRethinkQuery } = require('./query-transformer');
 const { parseChannelResourceQuery } = require('./channel-resource-parser');
 const AsyncStreamEmitter = require('async-stream-emitter');
+const jsonStableStringify = require('json-stable-stringify');
 const { validateQuery, getOwnProperty } = require('./validate');
 
 let AccessController = function (agServer, options) {
@@ -144,14 +145,18 @@ let AccessController = function (agServer, options) {
         }
         channelResourceQuery.action = action.SUBSCRIBE;
 
-        // Sometimes the real viewParams may be different from what can be parsed from
-        // the channel name; this is because some view params don't affect the real-time
-        // delivery of messages but they may still be useful in constructing the view.
-        if (channelResourceQuery.view != null && action.data && action.data.viewParams && typeof action.data.viewParams === 'object') {
-          channelResourceQuery.viewParams = action.data.viewParams;
-        }
-
         try {
+          // Sometimes the real viewParams may be different from what can be parsed from
+          // the channel name; this is because some view params don't affect the real-time
+          // delivery of messages but they may still be useful in constructing the view.
+          // Params encoded in the channel name always take precedence, so access checks
+          // are evaluated against the channel the socket is actually subscribing to.
+          if (channelResourceQuery.view != null && action.data && action.data.viewParams && typeof action.data.viewParams === 'object') {
+            channelResourceQuery.viewParams = this._mergeSubscribeViewParams(
+              channelResourceQuery,
+              action.data.viewParams
+            );
+          }
           validateQuery(channelResourceQuery, this.schema);
         } catch (validationError) {
           let error = new Error(
@@ -258,6 +263,48 @@ let AccessController = function (agServer, options) {
 };
 
 AccessController.prototype = Object.create(AsyncStreamEmitter.prototype);
+
+// Compares a param value parsed from a view channel name with one supplied by the client.
+// Unless typedViewChannelParams is enabled, channel names carry stringified values.
+AccessController.prototype._areViewParamValuesEqual = function (channelValue, value) {
+  if (this.options.typedViewChannelParams) {
+    return jsonStableStringify(channelValue ?? null) === jsonStableStringify(value ?? null);
+  }
+  return String(channelValue ?? null) === String(value ?? null);
+};
+
+// Merges viewParams supplied in subscription data with the params encoded in the
+// view channel name. Throws if they conflict, or if the client supplies params which
+// should have been part of the channel name.
+AccessController.prototype._mergeSubscribeViewParams = function (channelResourceQuery, dataViewParams) {
+  let channelViewParams = channelResourceQuery.viewParams;
+  if (channelViewParams == null || typeof channelViewParams !== 'object' || Array.isArray(channelViewParams)) {
+    throw new Error('The view channel name did not contain valid viewParams');
+  }
+  let modelSchema = getOwnProperty(this.schema, channelResourceQuery.type);
+  let viewSchema = getOwnProperty(modelSchema && modelSchema.views, channelResourceQuery.view);
+  let hasPrimaryFields = !!(viewSchema && viewSchema.primaryFields && viewSchema.primaryFields.length);
+
+  let mergedViewParams = {...dataViewParams};
+  for (let [field, channelValue] of Object.entries(channelViewParams)) {
+    if (Object.hasOwn(dataViewParams, field)) {
+      if (!this._areViewParamValuesEqual(channelValue, dataViewParams[field])) {
+        throw new Error(`The ${field} viewParam did not match the value in the channel name`);
+      }
+    } else {
+      mergedViewParams[field] = channelValue;
+    }
+  }
+  // Without primaryFields, every view param is encoded in the channel name.
+  if (!hasPrimaryFields) {
+    for (let field of Object.keys(dataViewParams)) {
+      if (!Object.hasOwn(channelViewParams, field)) {
+        throw new Error(`The ${field} viewParam was not part of the channel name`);
+      }
+    }
+  }
+  return mergedViewParams;
+};
 
 AccessController.prototype.applyPreAccessFilter = async function (req) {
   let authToken = req.socket?.authToken;
