@@ -1228,16 +1228,18 @@ AGCRUDRethink.prototype._update = async function (query, socket) {
     let publisherId = typeof query.publisherId === 'string' ? query.publisherId : undefined;
 
     if (query.field) {
-      if (queryValue === undefined) {
-        queryValue = null;
+      // The validator returns {[query.field]: value}; field subscribers expect the bare value.
+      let fieldValue = queryValue[query.field];
+      if (fieldValue === undefined) {
+        fieldValue = null;
       }
-      if (typeof queryValue === 'function') {
+      if (typeof fieldValue === 'function') {
         // Do not publish raw RethinkDB predicates or functions.
         this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field);
       } else {
         this.publish(this.channelPrefix + query.type + '/' + query.id + '/' + query.field, {
           type: 'update',
-          value: queryValue,
+          value: fieldValue,
           publisherSocketId: socket && socket.id,
           publisherId
         });
