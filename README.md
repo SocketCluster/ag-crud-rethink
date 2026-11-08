@@ -30,3 +30,18 @@ creating more than one database or table with the same name. After creating a da
 this many milliseconds to allow concurrent workers to finish their own creations, then drops any duplicates - keeping
 the copy with the smallest `id` so that all workers converge on the same one. The delay is only incurred when this
 worker actually created a database or table.
+- `connectRetryDelay` (Default: `5000`) - If the database is unreachable or not yet ready when `init()` runs (for
+example because RethinkDB is still starting up), the call is retried after this many milliseconds, indefinitely, and a
+`connectionRetry` event is emitted on each attempt with `{error, delay, attempt}`. Any other error is thrown
+immediately. Set it to `0` to fail immediately instead.
+- `databaseOptions` - Passed to the `rethinkdbdash` driver as-is, except that `maxExponent` defaults to `3`: after
+losing its connection, the driver backs off exponentially between reconnection attempts, up to `2^maxExponent` seconds
+apart (so 8 seconds by default; the driver's own default of `6` lets them grow to 64 seconds). Pass
+`databaseOptions.maxExponent` to change it.
+
+## Startup helpers
+
+- `crud.waitForConnection()` - Resolves once the database answers a query, retrying as `init()` does. Use it before
+running your own queries at startup.
+- `isConnectionError(error)` - Exported by the module; `true` when an error means the database was unreachable or not
+yet ready rather than that the query was wrong.

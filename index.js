@@ -7,6 +7,14 @@ const { constructTransformedRethinkQuery } = require('./query-transformer');
 const { validateQuery, getOwnProperty, createModelValidator, typeBuilder } = require('./validate');
 const errors = require('./errors');
 
+// Errors which mean the database is unreachable or not yet ready rather than that the
+// query was wrong, so the operation is worth retrying.
+function isConnectionError(error) {
+  if (!error) return false;
+  if (error.name === 'ReqlDriverError') return error.isOperational === true;
+  return error.name === 'ReqlOpFailedError' || error.name === 'ReqlOpIndeterminateError';
+}
+
 let AGCRUDRethink = function (options) {
   AsyncStreamEmitter.call(this);
 
@@ -18,7 +26,11 @@ let AGCRUDRethink = function (options) {
 
   this.modelValidators = {};
   this.schema = this.options.schema;
-  this.rethink = rethinkdbdash(this.options.databaseOptions);
+  this.rethink = rethinkdbdash({
+    // Caps the driver's reconnection backoff at 2^maxExponent seconds.
+    maxExponent: 3,
+    ...this.options.databaseOptions
+  });
   this.options.rethink = this.rethink;
   this.maxErrorCount = this.options.maxErrorCount ?? 100;
   this.maxMultiPublish = this.options.maxMultiPublish ?? 20;
@@ -26,6 +38,9 @@ let AGCRUDRethink = function (options) {
   // checking for (and cleaning up) duplicates which may have been created
   // concurrently by other workers.
   this.schemaSettlementDelay = this.options.schemaSettlementDelay ?? 3000;
+  // How long to wait before retrying init() or waitForConnection() while the
+  // database is unreachable or not yet ready; 0 fails immediately instead.
+  this.connectRetryDelay = this.options.connectRetryDelay ?? 5000;
 
   this.channelPrefix = 'crud>';
 
@@ -188,6 +203,30 @@ AGCRUDRethink.prototype._wait = function (duration) {
   return new Promise((resolve) => setTimeout(resolve, duration));
 };
 
+// Runs an idempotent database operation, retrying it while the database is
+// unreachable or not yet ready (e.g. still starting up) if connectRetryDelay is set.
+AGCRUDRethink.prototype._retryWhileDisconnected = async function (operation) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!this.connectRetryDelay || !isConnectionError(error)) {
+        throw error;
+      }
+      attempt++;
+      this.emit('connectionRetry', {error, delay: this.connectRetryDelay, attempt});
+      await this._wait(this.connectRetryDelay);
+    }
+  }
+};
+
+// Resolves once the database answers a query, for callers which run their own
+// queries at startup.
+AGCRUDRethink.prototype.waitForConnection = function () {
+  return this._retryWhileDisconnected(() => this.rethink.expr(true).run());
+};
+
 AGCRUDRethink.prototype._isAlreadyExistsError = function (error) {
   return !!error && typeof error.message === 'string' && /already exists/i.test(error.message);
 };
@@ -345,7 +384,12 @@ AGCRUDRethink.prototype._createTables = async function (dbName, tableNames) {
   }
 };
 
-AGCRUDRethink.prototype.init = async function () {
+AGCRUDRethink.prototype.init = function () {
+  return this._retryWhileDisconnected(() => this._init());
+};
+
+// Every step only creates what is missing, so it is safe to run again after a failure.
+AGCRUDRethink.prototype._init = async function () {
   let dbName = this.options.databaseOptions.db;
   await this._createDatabase(dbName);
   await this._createTables(dbName, Object.keys(this.schema));
@@ -1447,6 +1491,8 @@ module.exports.AGCRUDRethink = AGCRUDRethink;
 module.exports.type = typeBuilder;
 
 module.exports.createModelValidator = createModelValidator;
+
+module.exports.isConnectionError = isConnectionError;
 
 module.exports.attach = function (agServer, options) {
   if (options) {
